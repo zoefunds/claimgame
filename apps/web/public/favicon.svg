@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#0b1326"/>
+  <circle cx="27" cy="27" r="14" fill="none" stroke="#00dbe9" stroke-width="4"/>
+  <path d="M37 37 L50 50" stroke="#00dbe9" stroke-width="5" stroke-linecap="round"/>
+  <text x="27" y="32" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="14" font-weight="700" fill="#dbfcff">G</text>
+</svg>

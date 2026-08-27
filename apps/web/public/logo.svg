@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64">
+  <circle cx="27" cy="32" r="15" fill="none" stroke="#00dbe9" stroke-width="4.5"/>
+  <path d="M38 43 L52 57" stroke="#00dbe9" stroke-width="5.5" stroke-linecap="round"/>
+  <text x="27" y="38" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" font-weight="700" fill="#dbfcff">G</text>
+  <text x="68" y="41" font-family="Inter, sans-serif" font-size="26" font-weight="700" letter-spacing="-0.5" fill="#dae2fd">CLAIM<tspan fill="#00dbe9">GAME</tspan></text>
+</svg>

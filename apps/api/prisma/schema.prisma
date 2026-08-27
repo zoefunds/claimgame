@@ -1,0 +1,295 @@
+// CLAIMGAME database schema — see docs/architecture.md §15 for the
+// authoritative-vs-cached rationale behind every table here.
+//
+// NATIVE tables (users, sessions, notifications, protocols, seasons) are the
+// only source of truth for their data. CACHE tables (claims, claim_versions,
+// evidence, challenges, objections, resolutions, reputation_events,
+// reputation_scores, leaderboard_entries) are written ONLY by the indexer
+// worker (apps/api/src/indexer) replaying GenLayer contract state — never by
+// a client-facing API route. If this table's data and the contract ever
+// disagree, the contract wins; re-run the indexer from a fresh cursor.
+
+generator client {
+  provider      = "prisma-client-js"
+  // Prisma's runtime OpenSSL auto-detection inside the node:20-slim
+  // container was unreliable in practice — it reported "openssl-1.1.x"
+  // even after installing OpenSSL 3, and reported "openssl-3.0.x" the one
+  // other time. Shipping both engine binaries sidesteps the detection
+  // entirely instead of chasing which one it picks.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// NATIVE — off-chain only, this database is the source of truth
+// ============================================================================
+
+model User {
+  walletAddress String   @id @map("wallet_address")
+  displayName   String?  @map("display_name")
+  avatarUrl     String?  @map("avatar_url")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  sessions      Session[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  walletAddress String   @map("wallet_address")
+  refreshToken  String   @unique @map("refresh_token")
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+  expiresAt     DateTime @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+
+  user User @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@index([walletAddress])
+  @@map("sessions")
+}
+
+model AuthNonce {
+  nonce         String   @id
+  walletAddress String   @map("wallet_address")
+  createdAt     DateTime @default(now()) @map("created_at")
+  expiresAt     DateTime @map("expires_at")
+  usedAt        DateTime? @map("used_at")
+
+  @@index([walletAddress])
+  @@map("auth_nonces")
+}
+
+model Notification {
+  id            String   @id @default(uuid())
+  walletAddress String   @map("wallet_address")
+  type          String
+  payload       Json
+  readAt        DateTime? @map("read_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [walletAddress], references: [walletAddress], onDelete: Cascade)
+
+  @@index([walletAddress, readAt])
+  @@map("notifications")
+}
+
+model Protocol {
+  name      String   @id
+  category  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("protocols")
+}
+
+model Season {
+  id        String   @id
+  name      String
+  startsAt  DateTime @map("starts_at")
+  endsAt    DateTime @map("ends_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("seasons")
+}
+
+model IndexerCursor {
+  id            Int      @id @default(1)
+  lastBlock     BigInt   @default(0) @map("last_block")
+  lastEventId   String?  @map("last_event_id")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("indexer_cursor")
+}
+
+// ============================================================================
+// CACHE — mirrors on-chain state; indexer-written only
+// ============================================================================
+
+model Claim {
+  id                    String   @id
+  protocol              String
+  category              String
+  subject               String
+  sourceStatement       String   @map("source_statement")
+  creator               String
+  status                String
+  difficulty            String
+  claimBondWei          String   @map("claim_bond_wei")
+  claimBondDeposited     String   @map("claim_bond_deposited")
+  currentVersion        Int      @map("current_version")
+  challengeWindowSeconds Int     @map("challenge_window_seconds")
+  seasonId              String?  @map("season_id")
+  createdAt             DateTime @map("created_at")
+  resolvedAt            DateTime? @map("resolved_at")
+  // v0.3.6 — populated only while status == PENDING_APPEAL; mirrors the
+  // contract's own claim.pending_verdict / pending_payout_bps / appeal_deadline.
+  pendingVerdict        String?   @map("pending_verdict")
+  pendingPayoutBps      Int?      @map("pending_payout_bps")
+  appealDeadline        DateTime? @map("appeal_deadline")
+  contractTxHash        String   @map("contract_tx_hash")
+  syncedAt              DateTime @updatedAt @map("synced_at")
+
+  versions   ClaimVersion[]
+  evidence   Evidence[]
+  challenge  Challenge?
+  objections Objection[]
+  resolution Resolution?
+  appeal     Appeal?
+
+  @@index([status])
+  @@index([protocol])
+  @@index([difficulty])
+  @@map("claims")
+}
+
+model ClaimVersion {
+  claimId       String   @map("claim_id")
+  version       Int
+  interpretation String
+  author        String
+  rationale     String?
+  createdAt     DateTime @map("created_at")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@id([claimId, version])
+  @@map("claim_versions")
+}
+
+model Evidence {
+  id              String   @id
+  claimId         String   @map("claim_id")
+  submitter       String
+  evidenceType    String   @map("evidence_type")
+  url             String?
+  description     String
+  side            String
+  citedInVerdict  Boolean  @default(false) @map("cited_in_verdict")
+  submittedAt     DateTime @map("submitted_at")
+  contractTxHash  String   @map("contract_tx_hash")
+  // Evidence Manifest fields (audit finding #2) — populated once the
+  // judgment step actually fetches this source; null until then.
+  retrievedAt     DateTime? @map("retrieved_at")
+  contentHash     String?   @map("content_hash")
+  // v0.3.6 — the actual deterministic excerpt text, not just its hash
+  // (audit remaining-blocker #2: preservation, not just provenance).
+  snapshotText    String?   @map("snapshot_text")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+  @@map("evidence")
+}
+
+model Challenge {
+  claimId                  String   @id @map("claim_id")
+  challenger                String
+  challengeStakeWei         String   @map("challenge_stake_wei")
+  challengeStakeDeposited    String   @map("challenge_stake_deposited")
+  argument                  String
+  status                     String
+  createdAt                  DateTime @map("created_at")
+  contractTxHash             String   @map("contract_tx_hash")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([challenger])
+  @@map("challenges")
+}
+
+model Objection {
+  id         String   @id
+  claimId    String   @map("claim_id")
+  author     String
+  text       String
+  response   String?
+  resolved   Boolean  @default(false)
+  createdAt  DateTime @map("created_at")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+  @@map("objections")
+}
+
+model Resolution {
+  claimId          String   @id @map("claim_id")
+  verdict          String
+  confidence       String
+  payoutBps        Int      @map("payout_bps")
+  reasoningSummary String   @map("reasoning_summary")
+  evidenceCited    Json     @map("evidence_cited")
+  resolvedAt       DateTime @map("resolved_at")
+  contractTxHash   String   @map("contract_tx_hash")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("resolutions")
+}
+
+// v0.3.6 — audit remaining-blocker #3 (appeal / independent-witness round).
+// At most one appeal per claim; mirrors the contract's own appeals TreeMap.
+model Appeal {
+  claimId           String   @id @map("claim_id")
+  appellant         String
+  appealBondWei     String   @map("appeal_bond_wei")
+  originalVerdict   String   @map("original_verdict")
+  originalPayoutBps Int      @map("original_payout_bps")
+  appealVerdict     String   @map("appeal_verdict")
+  appealPayoutBps   Int      @map("appeal_payout_bps")
+  outcome           String
+  resolvedAt        DateTime @map("resolved_at")
+  contractTxHash    String   @map("contract_tx_hash")
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("appeals")
+}
+
+model ReputationEvent {
+  id           String   @id @default(uuid())
+  user         String
+  claimId      String   @map("claim_id")
+  role         String
+  outcome      String
+  stakeWeight  String   @map("stake_weight")
+  occurredAt   DateTime @map("occurred_at")
+
+  @@index([user])
+  @@index([claimId])
+  @@map("reputation_events")
+}
+
+model ReputationScore {
+  walletAddress          String   @id @map("wallet_address")
+  interpretationAccuracy  Float    @default(0) @map("interpretation_accuracy")
+  challengeAccuracy       Float    @default(0) @map("challenge_accuracy")
+  evidenceReliability     Float    @default(0) @map("evidence_reliability")
+  claimsCreated            Int      @default(0) @map("claims_created")
+  challengesRaised         Int      @default(0) @map("challenges_raised")
+  evidenceSubmitted        Int      @default(0) @map("evidence_submitted")
+  progressionTier          String   @default("NOVICE") @map("progression_tier")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  @@map("reputation_scores")
+}
+
+model LeaderboardEntry {
+  seasonId      String   @map("season_id")
+  category      String
+  walletAddress String   @map("wallet_address")
+  rank          Int
+  scoreValue    Float    @map("score_value")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@id([seasonId, category, walletAddress])
+  @@index([seasonId, category, rank])
+  @@map("leaderboard_entries")
+}

@@ -1,0 +1,31 @@
+# CLAIMGAME API — Fly.io deployment config.
+# Deploy from apps/api: `fly deploy --config ../../deploy/fly.api.toml --dockerfile ../../deploy/Dockerfile.api`
+app = "claimgame-api"
+primary_region = "iad"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+# min_machines_running = 1 is what satisfies the "backend must be on 24/7"
+# requirement — Fly will not cold-stop this service.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

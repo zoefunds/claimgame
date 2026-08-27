@@ -1,0 +1,28 @@
+# Builds the indexer worker from apps/api. Context must be the repo root:
+# `fly deploy --dockerfile deploy/Dockerfile.indexer`
+FROM node:20-slim AS base
+WORKDIR /repo
+RUN corepack enable
+# Prisma's query engine needs libssl at runtime — see Dockerfile.api for the
+# same fix (missing this in a stage that isn't derived from `base` is what
+# crash-looped the API's first deploy).
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
+FROM base AS deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/api/package.json apps/api/package.json
+RUN pnpm install --frozen-lockfile --filter @claimgame/api...
+
+FROM deps AS build
+COPY apps/api apps/api
+RUN pnpm --filter @claimgame/api prisma:generate
+RUN pnpm --filter @claimgame/api build
+
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /repo/apps/api/dist /repo/apps/api/dist
+COPY --from=build /repo/apps/api/node_modules /repo/apps/api/node_modules
+COPY --from=build /repo/apps/api/prisma /repo/apps/api/prisma
+COPY --from=build /repo/node_modules /repo/node_modules
+WORKDIR /repo/apps/api
+CMD ["node", "dist/indexer/index.js"]

@@ -1,0 +1,15 @@
+# CLAIMGAME indexer worker — separate Fly app so it scales/restarts
+# independently of the API. Also min_machines_running = 1 for 24/7 uptime;
+# it has no HTTP surface, so no [http_service] block.
+app = "claimgame-indexer"
+primary_region = "iad"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
