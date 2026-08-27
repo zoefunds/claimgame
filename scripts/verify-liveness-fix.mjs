@@ -15,7 +15,7 @@ import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3";
+const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0x4a4E1a6C3349E88707158fb15bE2F0f6560029Da";
 const ONE_GEN = 10n ** 18n;
 const CALL_SPACING_MS = 2500;
 
