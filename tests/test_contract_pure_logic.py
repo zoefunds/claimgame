@@ -237,8 +237,66 @@ class TestBpsRounding(unittest.TestCase):
 
 
 # ============================================================================
+# Mirrors contract.py's _extract_host / _is_verified_primary_source
+# (v0.3.7, audit remaining-blocker #2 — source tiers were self-declared)
+# ============================================================================
+
+
+def extract_host(url: str) -> str:
+    lowered = url.strip().lower()
+    if "://" not in lowered:
+        return ""
+    rest = lowered.split("://", 1)[1]
+    host_and_maybe_port = rest.split("/", 1)[0].split("@")[-1]
+    if host_and_maybe_port.startswith("["):
+        return ""
+    return host_and_maybe_port.split(":", 1)[0]
+
+
+def is_verified_primary_source(url: str, official_domains: list) -> bool:
+    if not official_domains:
+        return False
+    host = extract_host(url)
+    if not host:
+        return False
+    for domain in official_domains:
+        domain = domain.strip().lower()
+        if domain and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
+
+
+class TestVerifiedPrimarySource(unittest.TestCase):
+    def test_matches_exact_domain(self):
+        self.assertTrue(is_verified_primary_source("https://uniswap.org/whitepaper.pdf", ["uniswap.org"]))
+
+    def test_matches_subdomain(self):
+        self.assertTrue(is_verified_primary_source("https://docs.uniswap.org/contracts/v4", ["uniswap.org"]))
+        self.assertTrue(is_verified_primary_source("https://gov.uniswap.org/t/123", ["uniswap.org"]))
+
+    def test_rejects_unrelated_domain(self):
+        self.assertFalse(is_verified_primary_source("https://some-random-blog.com/uniswap-is-great", ["uniswap.org"]))
+
+    def test_rejects_lookalike_domain(self):
+        # "uniswap.org.evil.com" ends with ".org.evil.com", not ".uniswap.org"
+        # — must not match via naive substring search.
+        self.assertFalse(is_verified_primary_source("https://uniswap.org.evil.com/", ["uniswap.org"]))
+        # "notuniswap.org" is not "uniswap.org" and does not end with
+        # ".uniswap.org" either — must not match via naive suffix search.
+        self.assertFalse(is_verified_primary_source("https://notuniswap.org/", ["uniswap.org"]))
+
+    def test_no_official_domains_registered_means_unverified(self):
+        self.assertFalse(is_verified_primary_source("https://docs.uniswap.org/", []))
+
+    def test_multiple_registered_domains(self):
+        domains = ["uniswap.org", "app.uniswap.org.example-mirror.io"]
+        self.assertTrue(is_verified_primary_source("https://blog.uniswap.org/", domains))
+
+
+# ============================================================================
 # Mirrors contract.py's _select_judged_evidence (per-party evidence slots —
-# the audit-finding-#3 griefing fix)
+# the audit-finding-#3 griefing fix, extended in v0.3.7 with verified-source
+# tiering for audit remaining-blocker #2)
 # ============================================================================
 
 
@@ -247,13 +305,21 @@ PRIMARY_EVIDENCE_TYPES = frozenset({
 })
 
 
-def _primary_first(items: list) -> list:
-    return sorted(items, key=lambda e: 0 if e.get("evidence_type") in PRIMARY_EVIDENCE_TYPES else 1)
+def _tier_rank(item: dict, official_domains) -> int:
+    if item.get("evidence_type") not in PRIMARY_EVIDENCE_TYPES:
+        return 2
+    if official_domains and is_verified_primary_source(item.get("url") or "", official_domains):
+        return 0
+    return 1
 
 
-def select_judged_evidence(evidence_items: list, claimant: str, challenger: str, per_party: int = 4) -> list:
-    claimant_items = _primary_first([e for e in evidence_items if e.get("submitter") == claimant])[:per_party]
-    challenger_items = _primary_first([e for e in evidence_items if e.get("submitter") == challenger])[:per_party]
+def _primary_first(items: list, official_domains=None) -> list:
+    return sorted(items, key=lambda e: _tier_rank(e, official_domains))
+
+
+def select_judged_evidence(evidence_items: list, claimant: str, challenger: str, per_party: int = 4, official_domains=None) -> list:
+    claimant_items = _primary_first([e for e in evidence_items if e.get("submitter") == claimant], official_domains)[:per_party]
+    challenger_items = _primary_first([e for e in evidence_items if e.get("submitter") == challenger], official_domains)[:per_party]
 
     total_cap = per_party * 2
     remaining = total_cap - len(claimant_items) - len(challenger_items)
@@ -268,8 +334,8 @@ def select_judged_evidence(evidence_items: list, claimant: str, challenger: str,
     return claimant_items + challenger_items + third_party
 
 
-def _evidence(eid, submitter, evidence_type="URL"):
-    return {"id": eid, "submitter": submitter, "evidence_type": evidence_type}
+def _evidence(eid, submitter, evidence_type="URL", url=""):
+    return {"id": eid, "submitter": submitter, "evidence_type": evidence_type, "url": url}
 
 
 class TestEvidenceSlotGriefingFix(unittest.TestCase):
@@ -338,6 +404,28 @@ class TestEvidenceSlotGriefingFix(unittest.TestCase):
         self.assertIn("docs1", claimant_judged_ids)
         self.assertIn("gov1", claimant_judged_ids)
         self.assertEqual(len(claimant_judged_ids), 4)
+
+    def test_verified_primary_outranks_unverified_primary_and_corroborative(self):
+        """v0.3.7: within one party's own 4 slots, a VERIFIED primary source
+        (URL host matches the protocol's registered official domain) must
+        be selected ahead of a self-declared-but-unverified primary item
+        and ahead of corroborative evidence, even when it was submitted
+        last — a label alone should not outrank an actually-checked source."""
+        claimant, challenger = "0xA", "0xB"
+        official_domains = ["uniswap.org"]
+        items = [
+            _evidence("forum1", claimant, "FORUM_DISCUSSION", "https://reddit.com/r/uniswap"),
+            _evidence("fake_primary", claimant, "PROTOCOL_DOCUMENTATION", "https://totally-not-uniswap.example.com/docs"),
+            _evidence("social1", claimant, "SOCIAL_POST", "https://twitter.com/uniswap/status/1"),
+            _evidence("real_primary", claimant, "PROTOCOL_DOCUMENTATION", "https://docs.uniswap.org/contracts/v4"),
+            _evidence("b0", challenger, "URL", "https://example.com"),
+        ]
+        judged = select_judged_evidence(items, claimant, challenger, official_domains=official_domains)
+        claimant_judged = [e["id"] for e in judged if e["submitter"] == claimant]
+        # All 4 of the claimant's items fit within their cap here, but the
+        # ORDER must put the verified source first.
+        self.assertEqual(claimant_judged[0], "real_primary")
+        self.assertEqual(claimant_judged[1], "fake_primary")
 
 
 # ============================================================================

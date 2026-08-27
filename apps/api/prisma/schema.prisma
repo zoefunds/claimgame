@@ -181,6 +181,11 @@ model Evidence {
   // v0.3.6 — the actual deterministic excerpt text, not just its hash
   // (audit remaining-blocker #2: preservation, not just provenance).
   snapshotText    String?   @map("snapshot_text")
+  // v0.3.7 — SHA-256 of the FULL deterministically-normalized page (not
+  // just the bounded excerpt), so the original source can be checked
+  // against this fingerprint even though only the excerpt is stored
+  // verbatim (audit remaining-blocker #3).
+  fullPageHash    String?   @map("full_page_hash")
 
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
 

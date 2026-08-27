@@ -456,8 +456,22 @@ export const contractWrites = {
   // v0.3.6: appeal bond is a fixed 10 GEN (APPEAL_BOND_WEI == MIN_CLAIM_BOND_WEI
   // in contract.py) — not user-configurable, so it's hardcoded here rather
   // than taking a param a caller could get wrong and have rejected on-chain.
-  raiseAppeal: (account: Account, claimId: string, onStatus: (s: TxStatus) => void) =>
-    writeAndTrack(account, "raise_appeal", [claimId], onStatus, { value: parseGen("10") }),
+  // v0.3.7: raise_appeal now optionally accepts one new evidence item
+  // specifically for the appeal round (audit remaining-blocker #4) — pass
+  // empty strings for all three to appeal without new evidence.
+  raiseAppeal: (
+    account: Account,
+    claimId: string,
+    appealEvidence: { evidenceType: string; url: string; description: string },
+    onStatus: (s: TxStatus) => void,
+  ) =>
+    writeAndTrack(
+      account,
+      "raise_appeal",
+      [claimId, appealEvidence.evidenceType, appealEvidence.url, appealEvidence.description],
+      onStatus,
+      { value: parseGen("10") },
+    ),
 
   finalizeSettlement: (account: Account, claimId: string, onStatus: (s: TxStatus) => void) =>
     writeAndTrack(account, "finalize_settlement", [claimId], onStatus),

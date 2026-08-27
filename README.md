@@ -6,7 +6,7 @@ A Web3 strategy game: players interpret ambiguous protocol statements, back thei
 
 **Live:** [claim-game.vercel.app](https://claim-game.vercel.app) · API: [claimgame-api.fly.dev](https://claimgame-api.fly.dev/healthz)
 
-**Current deployed contract:** `0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3` (v0.3.6, GenLayer StudioNet) — see [Contract version history](#contract-version-history) below for the full audit-remediation timeline.
+**Current deployed contract:** `0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3` (v0.3.6, GenLayer StudioNet). **v0.3.7 is in the source tree, not yet deployed** — see [Contract version history](#contract-version-history) below for the full audit-remediation timeline.
 
 ## Status
 
@@ -17,7 +17,7 @@ A Web3 strategy game: players interpret ambiguous protocol statements, back thei
 | 2 — Architecture | ✅ [`docs/architecture.md`](docs/architecture.md) |
 | 3 — UX/UI | ✅ [`docs/ux.md`](docs/ux.md) |
 | 4 — Scaffold | ✅ Monorepo, `apps/web`, `apps/api` |
-| 5 — GenLayer contract | ✅ [`contracts/claimgame/contract.py`](contracts/claimgame/contract.py) — v0.3.6, ~1,740 lines |
+| 5 — GenLayer contract | ✅ [`contracts/claimgame/contract.py`](contracts/claimgame/contract.py) — v0.3.7, ~1,940 lines |
 | 6 — Contract testing | ✅ Deployed to StudioNet; all 37 public methods exercised live with real data across multiple test rounds; a 31-test deterministic suite covers every pure function — see [Contract test results](#contract-test-results) |
 | 7 — Backend | ✅ Deployed to Fly.io — API + Prisma/Postgres + indexer, all live 24/7 (indexer rate-limit-hardened) |
 | 8 — Auth/wallet | ✅ Sign-in-with-wallet (nonce + signature), auto-triggered on connect via Reown AppKit, refresh-token rotation |
@@ -29,7 +29,7 @@ A Web3 strategy game: players interpret ambiguous protocol statements, back thei
 
 | Piece | Where | Notes |
 |---|---|---|
-| Contract | GenLayer StudioNet | `0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3` — v0.3.6, deployed 2026-08-27 |
+| Contract | GenLayer StudioNet | `0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3` — v0.3.6 live; v0.3.7 (source-verified evidence tiers, full-page hashing, appeal-specific evidence) in the source tree, not yet deployed — see [genlayer.md](docs/genlayer.md#v037--fourth-re-audit-response-source-verification-full-page-hashing-appeal-specific-evidence-2026-08-27) |
 | Frontend | Vercel — [claim-game.vercel.app](https://claim-game.vercel.app) | project `claim-game`, org `adebiyi2002gmailcoms-projects` |
 | API | Fly.io — [claimgame-api.fly.dev](https://claimgame-api.fly.dev) | `min_machines_running=1`, 24/7 |
 | Indexer | Fly.io — `claimgame-indexer` (no public URL, background worker) | `min_machines_running=1` (2 machines), 24/7, polls the contract every 15 minutes with a settled-claim skip |
@@ -133,8 +133,9 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 ## Roadmap / known gaps
 
 - **Indexer scaling**: still O(active claims) per tick, not event-cursor-based. Fine at current claim volume — the settled-claim skip buys real headroom — but a high-volume future needs a real cursor/webhook model instead of polling.
-- **Immutable evidence snapshot, partial**: v0.3.6 stores the actual deterministic excerpt text on-chain (`snapshot_text`), not just its hash — real preservation of what the judgment step saw, within contract storage. A full content-addressed archive of the *entire original page* (the audit's stated ideal) is still out of scope — that needs off-chain storage this contract doesn't have.
-- **Source credibility tiering, policy-level only**: `PRIMARY_EVIDENCE_TYPES` (protocol docs, governance proposals, on-chain data, official announcements) are prioritized over `CORROBORATIVE_EVIDENCE_TYPES` (forum/social/screenshot/other) in evidence selection and the judgment prompt. There is no curated per-protocol trusted-source registry (e.g. verifying a URL actually belongs to the protocol it claims to document) — that's a real product feature needing its own design pass.
+- **Immutable evidence snapshot, partial**: the actual deterministic excerpt text is stored on-chain (`snapshot_text`), not just its hash, and v0.3.7 adds a SHA-256 hash of the *full* normalized page too (`full_page_hash`) so the original source can be checked against a fingerprint even though only the excerpt is preserved verbatim. A full content-addressed archive of the entire original page's *content* (the audit's stated ideal) is still out of scope — that needs off-chain storage this contract doesn't have.
+- **Source credibility tiering, now owner-verifiable (v0.3.7)**: evidence tiers are no longer purely self-declared. `set_protocol_official_domains` (owner-only) lets the contract owner attach real domains to a protocol; evidence URLs are checked against them (`VERIFIED_PRIMARY` vs `PRIMARY_UNVERIFIED` vs `CORROBORATIVE`) and weighted accordingly in both evidence selection and the judgment prompt. Still honestly partial: this only helps for protocols the owner has actually curated — a comprehensive trusted-source registry covering every protocol from day one is still roadmap.
+- **Final-verdict reliability is empirical, not yet proven at scale**: the deterministic evidence-extraction fix (v0.3.5) and the appeal mechanism (v0.3.6) both work live, but the final semantic judgment still requires leader/validator LLM agreement on verdict and payout band. A handful of successful live judgments is evidence, not a reliability distribution — a recorded test matrix of 20-50 varied real cases is the honest next step before trusting larger bonds on this. Not fabricated here with invented pass rates.
 - **SSRF filtering, floor only**: the contract-level URL filter (scheme/host allowlist, private-range/CGNAT/numeric-host blocking) is a floor, not complete protection. Real network-egress control belongs at the GenVM validator-node infrastructure layer, which this project does not operate.
 - **`claim_expired`/`claim_dispute_timeout`**: code-reviewed and access-control-tested, but their real-time deadlines (6h/7d respectively) haven't been waited out end-to-end in an automated test run.
 - **No appeal-outcome UI polish beyond the functional panel** — works, but hasn't had a design pass (loading states, richer countdown formatting, etc.).
@@ -155,6 +156,7 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 | v0.3.3 | `0x88BA19eF301C54138923B7e7F68c35F9B8469032` | Third audit pass: per-party evidence slots (closes "first 8" griefing vector), first deterministic test suite (caught 2 real bugs pre-deployment) |
 | v0.3.4 | `0xE7D7db76AaeC546b6E4B7384a67571B13FCE22b7` | Attempted fix: widened the outer verdict-equivalence tolerance — live re-test showed this was not the actual root cause |
 | v0.3.5 | `0xD799362AA3a84C981aE087C7BbF41e00a98b2840` | **The real fix**: deterministic-core redesign of evidence extraction (no LLM in the loop, `strict_eq` instead of `prompt_comparative`) — confirmed live: judgment consensus reached on evidence that had failed 5 times before |
-| **v0.3.6** | **`0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3`** (current) | Appeal/independent-witness round, immutable snapshot text, source-credibility tiering, further SSRF hardening — appeal flow confirmed live end-to-end; frontend appeal UI shipped |
+| v0.3.6 | `0x019Dc784eA88d2F5E27a2924E08a8f1F195ca4B3` (current live) | Appeal/independent-witness round, immutable snapshot text, source-credibility tiering, further SSRF hardening — appeal flow confirmed live end-to-end; frontend appeal UI shipped |
+| **v0.3.7** | *(in source tree, not yet deployed)* | Owner-curated official-domain verification for source tiers (3-value: VERIFIED_PRIMARY/PRIMARY_UNVERIFIED/CORROBORATIVE), SHA-256 hash of the full normalized page (not just the excerpt), appeal-specific evidence submission with a guaranteed-judged slot — 41 deterministic tests passing, `tsc`/API build clean, contract-side changes ready for redeploy |
 
 Full narrative for every row above — root causes, exact bugs, live test transcripts — is in [docs/genlayer.md](docs/genlayer.md).

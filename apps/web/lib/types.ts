@@ -84,6 +84,12 @@ export interface Evidence {
    * judgment step actually fetches this source. */
   retrieved_at?: string | null;
   content_hash?: string | null;
+  /** v0.3.6 — the actual excerpt text, preserved verbatim, not just hashed. */
+  snapshot_text?: string | null;
+  /** v0.3.7 — SHA-256 of the full normalized page, for verifying the
+   * original source against this fingerprint even though only the
+   * excerpt above is stored verbatim. */
+  full_page_hash?: string | null;
 }
 
 export interface Challenge {
@@ -175,6 +181,8 @@ export interface BackendEvidence {
   submittedAt: string;
   retrievedAt?: string | null;
   contentHash?: string | null;
+  snapshotText?: string | null;
+  fullPageHash?: string | null;
 }
 
 export interface BackendChallenge {
@@ -244,6 +252,8 @@ export function mapBackendEvidence(row: BackendEvidence): Evidence {
     cited_in_verdict: row.citedInVerdict,
     retrieved_at: row.retrievedAt,
     content_hash: row.contentHash,
+    snapshot_text: row.snapshotText,
+    full_page_hash: row.fullPageHash,
   };
 }
 

@@ -211,6 +211,7 @@ async function syncEvidence(client: ReturnType<typeof createClient>, address: `0
       retrieved_at: string | null;
       content_hash: string | null;
       snapshot_text: string | null;
+      full_page_hash: string | null;
     }[]
   >(raw);
   for (const item of items) {
@@ -230,12 +231,14 @@ async function syncEvidence(client: ReturnType<typeof createClient>, address: `0
         retrievedAt: item.retrieved_at ? new Date(item.retrieved_at) : null,
         contentHash: item.content_hash,
         snapshotText: item.snapshot_text,
+        fullPageHash: item.full_page_hash ?? null,
       },
       update: {
         citedInVerdict: item.cited_in_verdict,
         retrievedAt: item.retrieved_at ? new Date(item.retrieved_at) : null,
         contentHash: item.content_hash,
         snapshotText: item.snapshot_text,
+        fullPageHash: item.full_page_hash ?? null,
       },
     });
   }

@@ -186,8 +186,20 @@ export default function ClaimDetailPage() {
                     </a>
                   )}
                   {item.retrieved_at ? (
-                    <div className="font-code-sm text-code-sm text-primary/70 mt-1" title={`content hash ${item.content_hash}`}>
-                      ✓ verified by contract fetch · {new Date(item.retrieved_at).toLocaleString()}
+                    <div className="mt-1 space-y-1">
+                      <div className="font-code-sm text-code-sm text-primary/70" title={`content hash ${item.content_hash}`}>
+                        ✓ verified by contract fetch · {new Date(item.retrieved_at).toLocaleString()}
+                      </div>
+                      {item.snapshot_text && (
+                        <div className="font-code-sm text-code-sm text-on-surface-variant bg-surface-container-lowest border border-outline-variant rounded p-2 whitespace-pre-wrap">
+                          &ldquo;{item.snapshot_text}&rdquo;
+                        </div>
+                      )}
+                      {item.full_page_hash && (
+                        <div className="font-code-sm text-code-sm text-on-surface-variant/60 truncate" title={item.full_page_hash}>
+                          full-page fingerprint (SHA-256): {item.full_page_hash}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="font-code-sm text-code-sm text-on-surface-variant/60 mt-1">
@@ -482,6 +494,7 @@ function PendingAppealBlock({
 }) {
   const [status, setStatus] = useState<TxStatus>("idle");
   const [now, setNow] = useState(() => Date.now());
+  const [appealEvidence, setAppealEvidence] = useState({ evidenceType: "URL", url: "", description: "" });
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -515,12 +528,39 @@ function PendingAppealBlock({
 
       {windowOpen ? (
         isParty ? (
-          <button
-            className="btn-primary"
-            onClick={() => run((account) => contractWrites.raiseAppeal(account, claim.id, setStatus))}
-          >
-            Raise Appeal (10 GEN bond)
-          </button>
+          <>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Optionally submit one new piece of evidence specifically for the appeal round — it will be
+              fetched and guaranteed to be considered, independent of the original evidence pool.
+            </p>
+            <select
+              className="input"
+              value={appealEvidence.evidenceType}
+              onChange={(e) => setAppealEvidence((s) => ({ ...s, evidenceType: e.target.value }))}
+            >
+              {["URL", "PROTOCOL_DOCUMENTATION", "GOVERNANCE_PROPOSAL", "BLOCKCHAIN_TRANSACTION", "OFFICIAL_ANNOUNCEMENT", "FORUM_DISCUSSION", "SOCIAL_POST", "SCREENSHOT", "OTHER"].map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <input
+              className="input"
+              placeholder="https://… (optional — leave blank to appeal without new evidence)"
+              value={appealEvidence.url}
+              onChange={(e) => setAppealEvidence((s) => ({ ...s, url: e.target.value }))}
+            />
+            <textarea
+              className="input min-h-16"
+              placeholder="Description (required only if a URL is provided)"
+              value={appealEvidence.description}
+              onChange={(e) => setAppealEvidence((s) => ({ ...s, description: e.target.value }))}
+            />
+            <button
+              className="btn-primary"
+              onClick={() => run((account) => contractWrites.raiseAppeal(account, claim.id, appealEvidence, setStatus))}
+            >
+              Raise Appeal (10 GEN bond)
+            </button>
+          </>
         ) : (
           <p className="font-code-sm text-code-sm text-on-surface-variant/60">
             Only the claimant or the challenger may raise an appeal on this claim.

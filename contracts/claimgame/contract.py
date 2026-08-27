@@ -412,6 +412,53 @@ def _is_safe_evidence_url(url: str) -> bool:
     return True
 
 
+def _extract_host(url: str) -> str:
+    """Shared with _is_safe_evidence_url's parsing — pulled out so
+    _is_verified_primary_source (below) doesn't duplicate the logic."""
+    lowered = url.strip().lower()
+    if "://" not in lowered:
+        return ""
+    rest = lowered.split("://", 1)[1]
+    host_and_maybe_port = rest.split("/", 1)[0].split("@")[-1]
+    if host_and_maybe_port.startswith("["):
+        return ""
+    return host_and_maybe_port.split(":", 1)[0]
+
+
+def _is_verified_primary_source(url: str, official_domains: list) -> bool:
+    """v0.3.7, audit remaining-blocker #2 ("source tiers are self-declared —
+    a user can label a social URL as PROTOCOL_DOCUMENTATION; the contract
+    validates the enum, not that the URL is an official source"). This is
+    the real fix, within what a contract can actually verify: whether the
+    evidence URL's host matches one of the protocol's OWNER-CURATED
+    official domains (set via set_protocol_official_domains — permissionless
+    registration cannot set these, only the contract owner can, so a
+    self-registered fake protocol can't claim an arbitrary domain).
+
+    Matching is by domain suffix (e.g. official domain "uniswap.org"
+    matches host "docs.uniswap.org" and "gov.uniswap.org") so one
+    registration covers a protocol's whole subdomain family.
+
+    Honest scope limit, not fixed further here: this still requires the
+    owner to have actually curated official_domains for a given protocol.
+    An unregistered or newly-created protocol has an empty list, so
+    _select_judged_evidence/the judgment prompt correctly falls back to
+    treating its evidence as PRIMARY_UNVERIFIED rather than a hard
+    rejection — this is a weighting improvement, not a curated trusted-
+    source REGISTRY covering every protocol on day one (that's still
+    roadmap, see docs/genlayer.md)."""
+    if not official_domains:
+        return False
+    host = _extract_host(url)
+    if not host:
+        return False
+    for domain in official_domains:
+        domain = domain.strip().lower()
+        if domain and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
+
+
 # ===========================================================================
 # CONTRACT
 # ===========================================================================
@@ -478,15 +525,48 @@ class ClaimGame(gl.Contract):
         """Permissionless-but-curated: anyone may propose a protocol entry,
         the owner may relabel its category later. Protocols are metadata
         only — they never gate whether a claim can be created, so this
-        registry cannot be used to censor gameplay."""
+        registry cannot be used to censor gameplay.
+
+        v0.3.7: the stored value is now a JSON record (category +
+        official_domains), not a bare category string — official_domains
+        starts empty here (permissionless registration must NOT be able to
+        claim an official domain for itself; only the owner can, via
+        set_protocol_official_domains below — see that method's docstring
+        for why this two-step design is the actual fix for audit
+        remaining-blocker #2)."""
         _require(bool(name), "name required")
         _require(bool(category), "category required")
-        self.protocols[name] = category
+        existing_domains: list = []
+        if name in self.protocols:
+            existing = json.loads(self.protocols[name])
+            existing_domains = existing.get("official_domains", [])
+        self.protocols[name] = _dump({"category": category, "official_domains": existing_domains})
+
+    @gl.public.write
+    def set_protocol_official_domains(self, name: str, domains_csv: str) -> None:
+        """Owner-only curation step (v0.3.7, audit remaining-blocker #2):
+        this is what actually makes a PROTOCOL_DOCUMENTATION/
+        GOVERNANCE_PROPOSAL/OFFICIAL_ANNOUNCEMENT evidence tier mean
+        something beyond a self-declared enum value — see
+        _is_verified_primary_source's docstring. `domains_csv` is a
+        comma-separated list, e.g. "uniswap.org,gov.uniswap.org". Passing
+        an empty string clears the list (falls back to
+        PRIMARY_UNVERIFIED weighting for that protocol's evidence)."""
+        _require(str(gl.message.sender_address) == self.owner, "Only owner")
+        _require(name in self.protocols, "Unknown protocol — register it first")
+        category = json.loads(self.protocols[name]).get("category", "UNCATEGORIZED")
+        domains = [d.strip() for d in domains_csv.split(",") if d.strip()]
+        self.protocols[name] = _dump({"category": category, "official_domains": domains})
 
     @gl.public.view
     def list_protocols(self) -> str:
-        result = {name: self.protocols[name] for name in self.protocols.keys()}
+        result = {name: json.loads(self.protocols[name]) for name in self.protocols.keys()}
         return _dump(result)
+
+    def _official_domains_for(self, protocol_name: str) -> list:
+        if protocol_name not in self.protocols:
+            return []
+        return json.loads(self.protocols[protocol_name]).get("official_domains", [])
 
     @gl.public.write
     def create_season(self, name: str, starts_at_iso: str, ends_at_iso: str) -> str:
@@ -549,7 +629,7 @@ class ClaimGame(gl.Contract):
         )
 
         if protocol not in self.protocols:
-            self.protocols[protocol] = category or "UNCATEGORIZED"
+            self.protocols[protocol] = _dump({"category": category or "UNCATEGORIZED", "official_domains": []})
 
         claim_id = _u256_to_str(self.next_claim_id)
         self.next_claim_id = self.next_claim_id + u256(1)
@@ -698,6 +778,18 @@ class ClaimGame(gl.Contract):
         if url:
             _require(_is_safe_evidence_url(url), "url is not an allowed evidence source (must be http/https, no private/internal hosts)")
 
+        return self._record_evidence(claim_id, str(gl.message.sender_address), evidence_type, url, description, side)
+
+    def _record_evidence(
+        self, claim_id: str, submitter: str, evidence_type: str, url: str, description: str, side: str,
+    ) -> str:
+        """Shared by submit_evidence and raise_appeal's optional
+        appeal-specific evidence (v0.3.7, audit remaining-blocker #4). Both
+        callers validate their own preconditions (claim status, caller
+        identity) before reaching here — this is purely the record-creation
+        step, factored out so appeal evidence is a REAL Evidence record
+        (visible on the Evidence Board, indexed, fetched/hashed the same
+        way), not a throwaway value only the judgment prompt ever sees."""
         evidence_ids = json.loads(self.claim_evidence_ids[claim_id])
         _require(len(evidence_ids) < MAX_EVIDENCE_PER_CLAIM, "Evidence limit reached for this claim")
 
@@ -707,7 +799,7 @@ class ClaimGame(gl.Contract):
         record = {
             "id": evidence_id,
             "claim_id": claim_id,
-            "submitter": str(gl.message.sender_address),
+            "submitter": submitter,
             "evidence_type": evidence_type,
             "url": url,
             # Evidence Manifest fields (audit finding #2), populated once the
@@ -717,6 +809,7 @@ class ClaimGame(gl.Contract):
             "retrieved_at": None,
             "content_hash": None,
             "snapshot_text": None,
+            "full_page_hash": None,
             "description": description,
             "side": side,
             "submitted_at": _now_iso(),
@@ -727,7 +820,7 @@ class ClaimGame(gl.Contract):
         evidence_ids.append(evidence_id)
         self.claim_evidence_ids[claim_id] = json.dumps(evidence_ids)
 
-        self._emit_reputation_event(str(gl.message.sender_address), claim_id, "EVIDENCE", "SUBMITTED", u256(0))
+        self._emit_reputation_event(submitter, claim_id, "EVIDENCE", "SUBMITTED", u256(0))
         return evidence_id
 
     @gl.public.view
@@ -1040,7 +1133,9 @@ class ClaimGame(gl.Contract):
         judgment = self._run_judgment(claim, version, challenge, evidence_items)
         self._apply_verdict(claim_id, judgment)
 
-    def _select_judged_evidence(self, evidence_items: list, claimant: str, challenger: str) -> list:
+    def _select_judged_evidence(
+        self, evidence_items: list, claimant: str, challenger: str, official_domains: list | None = None,
+    ) -> list:
         """Audit finding #3 fix — per-party evidence slots. See
         MAX_JUDGED_EVIDENCE_PER_PARTY's definition for the griefing vector
         this closes. Submission order is preserved within each party's own
@@ -1053,10 +1148,27 @@ class ClaimGame(gl.Contract):
         is still the tiebreaker within a tier). This never lets a party's
         weaker corroborative evidence crowd out their own stronger primary
         evidence out of a fixed 4-slot cap; it does NOT reorder across
-        parties or give one party more slots than the other."""
+        parties or give one party more slots than the other.
+
+        v0.3.7, audit remaining-blocker #2: the sort now has three tiers,
+        not two — VERIFIED primary (URL host matches the protocol's
+        owner-curated official_domains, see _is_verified_primary_source)
+        ranks above self-declared/unverified primary, which still ranks
+        above corroborative. A verified official source is real, checked
+        evidence; a self-labeled "PROTOCOL_DOCUMENTATION" pointing at an
+        unregistered domain is still evidence, just not privileged over
+        another item purely on the strength of an unverifiable label."""
+
+        def _tier_rank(item: dict) -> int:
+            if item.get("evidence_type") not in PRIMARY_EVIDENCE_TYPES:
+                return 2  # corroborative
+            url = item.get("url") or ""
+            if official_domains and _is_verified_primary_source(url, official_domains):
+                return 0  # verified primary
+            return 1  # self-declared/unverified primary
 
         def _primary_first(items: list) -> list:
-            return sorted(items, key=lambda e: 0 if e.get("evidence_type") in PRIMARY_EVIDENCE_TYPES else 1)
+            return sorted(items, key=_tier_rank)
 
         claimant_items = _primary_first([e for e in evidence_items if e.get("submitter") == claimant])[:MAX_JUDGED_EVIDENCE_PER_PARTY]
         challenger_items = _primary_first([e for e in evidence_items if e.get("submitter") == challenger])[:MAX_JUDGED_EVIDENCE_PER_PARTY]
@@ -1087,19 +1199,35 @@ class ClaimGame(gl.Contract):
         version: dict,
         challenge: dict,
         evidence_items: list,
+        guaranteed_evidence_id: str | None = None,
     ) -> dict:
         """The one place this contract performs nondeterministic work: fetch
         every cited evidence URL live (never trust the submitter's restated
         description of what a source says) and ask the model for a
         structured verdict. Equivalence across validators is checked only on
-        the decision-relevant fields (see module docstring, §b)."""
+        the decision-relevant fields (see module docstring, §b).
 
+        `guaranteed_evidence_id` (v0.3.7, audit remaining-blocker #4 —
+        "appeal is a fresh judgment round, not independent evidence
+        review"): when raise_appeal submits new evidence specifically for
+        the appeal round, that item is guaranteed to be judged regardless
+        of the normal per-party slot caps — the whole point is that the
+        appeal round gets to consider something the original round didn't,
+        not just re-run the exact same evidence pool with new validators."""
+
+        official_domains = self._official_domains_for(claim["protocol"])
         evidence_briefs = []
-        judged_items = self._select_judged_evidence(evidence_items, claim["creator"], challenge["challenger"])
+        judged_items = self._select_judged_evidence(evidence_items, claim["creator"], challenge["challenger"], official_domains)
+        if guaranteed_evidence_id and guaranteed_evidence_id not in {i["id"] for i in judged_items}:
+            for e in evidence_items:
+                if e["id"] == guaranteed_evidence_id:
+                    judged_items = judged_items + [e]
+                    break
         for item in judged_items:
             extracted_facts = ""
+            full_page_hash = ""
             if item.get("url"):
-                extracted_facts = self._fetch_and_extract_facts(item["url"], claim["subject"], claim["source_statement"])
+                extracted_facts, full_page_hash = self._fetch_and_extract_facts(item["url"], claim["subject"], claim["source_statement"])
                 # Evidence Manifest (audit finding #2): record what was
                 # actually retrieved and when, on the evidence item itself,
                 # so provenance survives even if the source page later
@@ -1130,15 +1258,27 @@ class ClaimGame(gl.Contract):
                     stored["retrieved_at"] = _now_iso()
                     stored["content_hash"] = _content_hash(extracted_facts)
                     stored["snapshot_text"] = extracted_facts
+                    stored["full_page_hash"] = full_page_hash
                     self.evidence[evidence_id] = _dump(stored)
+
+            # v0.3.7, audit remaining-blocker #2: three-value tier, not two —
+            # VERIFIED_PRIMARY only when the URL host actually matches the
+            # protocol's owner-curated official_domains; a self-declared
+            # PROTOCOL_DOCUMENTATION label pointing anywhere else is
+            # PRIMARY_UNVERIFIED, still evidence, just not treated as
+            # authoritative purely on the strength of its own label.
+            if item["evidence_type"] not in PRIMARY_EVIDENCE_TYPES:
+                source_tier = "CORROBORATIVE"
+            elif _is_verified_primary_source(item.get("url") or "", official_domains):
+                source_tier = "VERIFIED_PRIMARY"
+            else:
+                source_tier = "PRIMARY_UNVERIFIED"
 
             evidence_briefs.append(
                 {
                     "id": item["id"],
                     "type": item["evidence_type"],
-                    # v0.3.6, audit remaining-blocker #4: explicit tier label
-                    # passed to the model, not left implicit in "type".
-                    "source_tier": "PRIMARY" if item["evidence_type"] in PRIMARY_EVIDENCE_TYPES else "CORROBORATIVE",
+                    "source_tier": source_tier,
                     "submitter_claimed_side": item["side"],
                     "submitter_description": item["description"],
                     "extracted_facts": extracted_facts,
@@ -1212,7 +1352,7 @@ class ClaimGame(gl.Contract):
         _require(isinstance(result, dict) and "verdict" in result, "Judgment produced no result")
         return result
 
-    def _fetch_and_extract_facts(self, url: str, subject: str, source_statement: str) -> str:
+    def _fetch_and_extract_facts(self, url: str, subject: str, source_statement: str) -> tuple:
         """v0.3.5 rewrite — the deterministic-core redesign the third audit's
         remaining-blocker #1 asked for, after v0.3.2's LLM-extraction
         tightening still failed validator consensus four consecutive times
@@ -1245,26 +1385,50 @@ class ClaimGame(gl.Contract):
         The LLM is still used — but only once, later, in `_run_judgment`'s
         leader_fn, for the actual verdict synthesis — and now receives this
         much smaller, stable, non-model-generated excerpt as input instead
-        of another LLM's paraphrased summary of the page."""
+        of another LLM's paraphrased summary of the page.
+
+        v0.3.7, audit remaining-blocker #3 ("snapshots preserve the
+        adjudicated excerpt, not the full source"): this now ALSO returns a
+        SHA-256 fingerprint of the FULL deterministically-normalized page
+        (not just the bounded excerpt window), packed into the same
+        `strict_eq`-checked call so it costs no extra fetch and stays
+        exactly as validator-agreed as the excerpt itself. This is still
+        honestly a hash, not a stored archive of the full page (see
+        _content_hash's docstring on why storing unbounded raw content
+        on-chain isn't done) — but it means a full-page tampering check is
+        now possible even though only the excerpt text is preserved
+        verbatim: anyone who has a copy of the original page can re-run the
+        same normalization and confirm the hash matches, closing the gap
+        between "we preserved a slice" and "we can prove what the whole
+        page looked like" a step further without storing unbounded data."""
 
         def fetch_and_normalize():
             try:
                 html = gl.nondet.web.render(url, mode="html")
             except Exception:
-                return "NO_CONTENT_RETRIEVED: the source could not be fetched."
+                return _dump({"excerpt": "NO_CONTENT_RETRIEVED: the source could not be fetched.", "full_page_hash": ""})
 
             if not html:
-                return "NO_CONTENT_RETRIEVED: the source returned no content."
+                return _dump({"excerpt": "NO_CONTENT_RETRIEVED: the source returned no content.", "full_page_hash": ""})
 
             normalized = _normalize_html_to_text(html[:FACT_EXTRACTION_MAX_CHARS * 4])
             if not normalized:
-                return "NO_CONTENT_RETRIEVED: the source returned no readable text."
+                return _dump({"excerpt": "NO_CONTENT_RETRIEVED: the source returned no readable text.", "full_page_hash": ""})
 
             excerpt = _extract_deterministic_excerpt(normalized, subject, source_statement)
-            return excerpt if excerpt else "NO_RELEVANT_CONTENT"
+            return _dump({
+                "excerpt": excerpt if excerpt else "NO_RELEVANT_CONTENT",
+                "full_page_hash": _content_hash(normalized),
+            })
 
         result = gl.eq_principle.strict_eq(fetch_and_normalize)
-        return result if isinstance(result, str) else ""
+        if not isinstance(result, str):
+            return "", ""
+        try:
+            parsed = json.loads(result)
+        except (ValueError, TypeError):
+            return "", ""
+        return parsed.get("excerpt", ""), parsed.get("full_page_hash", "")
 
     def _build_judgment_prompt(
         self,
@@ -1304,16 +1468,28 @@ independently-verified facts; "extracted_facts" is authoritative,
 submitter's framing and may be biased or wrong):
 {evidence_json}
 
-SOURCE CREDIBILITY RULE: each evidence item is tagged "source_tier":
-PRIMARY (the protocol's own documentation, governance proposals, on-chain
-transaction data, or official announcements) or CORROBORATIVE (forum
-discussions, social posts, screenshots, or other secondary sources).
-Weight PRIMARY evidence as authoritative on what the protocol actually
-says or did. Treat CORROBORATIVE evidence as context only — it may explain
-community sentiment or interpretation, but it must never be the sole basis
-for a PASSED or FAILED verdict. If the only evidence bearing on a
-decisive point is CORROBORATIVE, that is itself a reason to lower
-confidence or return INCONCLUSIVE rather than a determinate verdict.
+SOURCE CREDIBILITY RULE: each evidence item is tagged "source_tier", one of
+three values, ranked strongest to weakest:
+- VERIFIED_PRIMARY: the protocol's own documentation, governance proposal,
+  on-chain transaction data, or official announcement, AND its URL has
+  been independently confirmed by this contract to belong to that
+  protocol's registered official domain. Treat this as authoritative on
+  what the protocol actually says or did.
+- PRIMARY_UNVERIFIED: the submitter labeled it the same way (protocol
+  documentation, governance, etc.) but its URL does NOT match a
+  registered official domain for this protocol (either none is
+  registered, or the URL points elsewhere). Treat this as informative but
+  NOT as strong as VERIFIED_PRIMARY — a label alone is not proof of an
+  official source.
+- CORROBORATIVE: forum discussions, social posts, screenshots, or other
+  secondary sources. Context only — it may explain community sentiment or
+  interpretation, but it must never be the sole basis for a PASSED or
+  FAILED verdict.
+If the only evidence bearing on a decisive point is CORROBORATIVE, or is
+PRIMARY_UNVERIFIED with no VERIFIED_PRIMARY source available at all, that
+is itself a reason to lower confidence or return INCONCLUSIVE rather than
+a determinate verdict — do not let an unverified label substitute for a
+confirmed official source on a point that actually decides the verdict.
 
 QUESTION:
 Does the claimant's canonical interpretation faithfully and defensibly
@@ -1485,7 +1661,21 @@ standard JSON parser without modification:
     # =======================================================================
 
     @gl.public.write.payable
-    def raise_appeal(self, claim_id: str) -> None:
+    def raise_appeal(
+        self,
+        claim_id: str,
+        appeal_evidence_type: str,
+        appeal_evidence_url: str,
+        appeal_evidence_description: str,
+    ) -> None:
+        """v0.3.7, audit remaining-blocker #4: the appellant may optionally
+        submit ONE new evidence item specifically for the appeal round —
+        pass empty strings for all three appeal_evidence_* params to appeal
+        without new evidence (the original v0.3.6 behavior, still fully
+        supported). When provided, it's recorded as a real Evidence item
+        (visible on the Evidence Board like any other) and GUARANTEED to be
+        judged in the appeal round regardless of the normal 4-slot cap —
+        see _run_judgment's guaranteed_evidence_id parameter."""
         claim = self._get_claim_record(claim_id)
         _require(claim["status"] == STATUS_PENDING_APPEAL, "Claim is not awaiting appeal")
         _require(claim_id not in self.appeals, "This claim has already used its one appeal")
@@ -1502,11 +1692,26 @@ standard JSON parser without modification:
         original_verdict = claim["pending_verdict"]
         original_payout_bps = int(claim["pending_payout_bps"])
 
+        guaranteed_evidence_id = None
+        if appeal_evidence_url:
+            _require(appeal_evidence_type in EVIDENCE_TYPES, "invalid appeal_evidence_type")
+            _require(bool(appeal_evidence_description), "appeal_evidence_description required")
+            _require_max_len(appeal_evidence_url, MAX_SHORT_TEXT_LEN, "appeal_evidence_url")
+            _require_max_len(appeal_evidence_description, MAX_LONG_TEXT_LEN, "appeal_evidence_description")
+            _require(
+                _is_safe_evidence_url(appeal_evidence_url),
+                "appeal_evidence_url is not an allowed evidence source (must be http/https, no private/internal hosts)",
+            )
+            side = EVIDENCE_SIDE_SUPPORT if appellant == claim["creator"] else EVIDENCE_SIDE_CHALLENGE
+            guaranteed_evidence_id = self._record_evidence(
+                claim_id, appellant, appeal_evidence_type, appeal_evidence_url, appeal_evidence_description, side,
+            )
+
         version = json.loads(self.claim_versions[f"{claim_id}:{claim['current_version']}"])
         evidence_ids = json.loads(self.claim_evidence_ids[claim_id])
         evidence_items = [json.loads(self.evidence[eid]) for eid in evidence_ids]
 
-        appeal_judgment = self._run_judgment(claim, version, challenge, evidence_items)
+        appeal_judgment = self._run_judgment(claim, version, challenge, evidence_items, guaranteed_evidence_id)
         appeal_verdict = appeal_judgment["verdict"]
         appeal_payout_bps = int(appeal_judgment["payout_bps"])
 
