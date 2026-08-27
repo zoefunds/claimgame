@@ -26,7 +26,7 @@ import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0x4a4E1a6C3349E88707158fb15bE2F0f6560029Da";
+const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0xF8aDB04610C531d779B463AdB549515b60E85feA";
 const ONE_GEN = 10n ** 18n;
 const FUND_AMOUNT = 5000; // GEN, per sim_fundAccount's whole-GEN unit
 

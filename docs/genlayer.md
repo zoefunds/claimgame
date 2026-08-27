@@ -333,4 +333,14 @@ Directly answers the audit's "make GenLayer indispensable, not just a better adj
 
 **Verification**: `python3 -m py_compile` clean, `genvm-lint check` clean (43 methods now, 22 view / 21 write). 8 new deterministic tests (`TestNormalizeDomain`, `TestExtractGithubOrgWebsite`) using a **real HTML fixture** copied verbatim from a live `curl https://github.com/Uniswap` fetch (not invented markup) — including a positive match, a mismatch case, and a determinism check. Full suite: 41 → 52 tests, all passing. `tsc --noEmit` clean on the frontend with the new page and contract.ts bindings.
 
-**Not yet done / honest scope**: no re-verification or challenge-a-verified-domain flow (a rejected/wrongly-approved domain has no dispute path yet — flagged as a real gap, not silently skipped, since it was mentioned as a natural extension in the design discussion but adds meaningful new surface). **Not yet deployed or live-tested** — same pattern as every prior contract change: this is source-tree-ready, needs the owner's redeploy, and needs a live `propose_official_domain` → `verify_official_domain` run against a real protocol (e.g. Uniswap v4 / uniswap.org / github.com/Uniswap, which is exactly the case the test fixture already validates offline) before anyone calls it proven end-to-end.
+**Not yet done / honest scope**: no re-verification or challenge-a-verified-domain flow (a rejected/wrongly-approved domain has no dispute path yet — flagged as a real gap, not silently skipped, since it was mentioned as a natural extension in the design discussion but adds meaningful new surface).
+
+### Deployed and live-verified (2026-08-27), `0xF8aDB04610C531d779B463AdB549515b60E85feA`
+
+`scripts/live-domain-verification.mjs` ran the exact real case discussed: `register_protocol("Uniswap v4", ...)` → `propose_official_domain("Uniswap v4", "uniswap.org", "Uniswap")` → `verify_official_domain(1)`. **Result: consensus reached, `status: VERIFIED`, `verification_result: MATCH`, and `uniswap.org` was added to `Uniswap v4`'s `official_domains` — with zero owner action anywhere in the path.** This is the first real domain to become `VERIFIED_PRIMARY`-eligible on this contract.
+
+**Negative control, also run**: proposed `totally-unrelated-website.example` as Uniswap's official domain — validators correctly reached consensus on `status: REJECTED`, `verification_result: NO_MATCH`. This confirms the check is a real comparison against live-fetched GitHub data, not a rubber stamp that verifies anything proposed.
+
+**Access-control checks, all correctly rejected**: re-verifying an already-resolved proposal, proposing a domain for an unregistered protocol, proposing with a bond below the 5 GEN minimum.
+
+This closes audit gap #2 for real — not by working around the owner-credential block, but by making the owner unnecessary for this decision entirely.
