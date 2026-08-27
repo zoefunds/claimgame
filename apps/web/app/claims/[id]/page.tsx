@@ -207,6 +207,11 @@ export default function ClaimDetailPage() {
                             : "⚠ archived off-chain, but the archive does NOT match the on-chain fingerprint — page may have changed since judgment"}
                         </div>
                       )}
+                      {item.archive_cid && (
+                        <div className="font-code-sm text-code-sm text-on-surface-variant/60 truncate" title={`${item.archive_cid} — a real IPFS CIDv1; not yet pinned to a live IPFS/Arweave network`}>
+                          content ID (CIDv1, unpinned): {item.archive_cid}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="font-code-sm text-code-sm text-on-surface-variant/60 mt-1">

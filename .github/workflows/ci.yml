@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  deterministic-tests:
+    name: Deterministic tests (contract logic + vote decoding + CID)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Python — contract pure-logic tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Node — vote-decoding mirror tests
+        run: node tests/test_vote_decoding.mjs
+      - name: Node — CIDv1 implementation tests
+        run: node tests/test_cid.mjs
+      - name: Contract syntax check
+        run: python3 -m py_compile contracts/claimgame/contract.py
+
+  typecheck-and-build:
+    name: Typecheck + build (web, api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm --filter @claimgame/api exec prisma generate
+      - name: Typecheck — web
+        run: pnpm --filter @claimgame/web typecheck
+      - name: Typecheck — api
+        run: pnpm --filter @claimgame/api typecheck
+      - name: Build — api
+        run: pnpm --filter @claimgame/api build
+      - name: Build — web
+        # NEXT_PUBLIC_* vars are baked in at build time; CI uses placeholder
+        # values since no real deployment happens here — this only proves
+        # the build itself succeeds, not that it's configured for prod.
+        env:
+          NEXT_PUBLIC_CLAIMGAME_CONTRACT_ADDRESS: "0x0000000000000000000000000000000000000000"
+          NEXT_PUBLIC_GENLAYER_RPC_URL: "https://studio.genlayer.com/api"
+          NEXT_PUBLIC_CHAIN_ID: "61999"
+          NEXT_PUBLIC_API_BASE_URL: "http://localhost:8080"
+          NEXT_PUBLIC_REOWN_PROJECT_ID: "138176b654e2fdc1b7f6f263b8731372"
+        run: pnpm --filter @claimgame/web build
+
+  genvm-lint:
+    name: GenVM contract lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install genvm-linter
+        run: pip install genvm-linter
+      - name: Lint + validate contract schema
+        run: genvm-lint check contracts/claimgame/contract.py --json

@@ -94,6 +94,10 @@ export interface Evidence {
    * our own indexer (not the contract) and verified against full_page_hash. */
   archived_at?: string | null;
   archive_hash_matches?: boolean | null;
+  /** v0.3.9 — a real CIDv1 (raw codec, sha2-256) over the archived content.
+   * Not yet pinned to a live IPFS/Arweave network, but a genuine, correct
+   * content identifier ready for pinning whenever that credential exists. */
+  archive_cid?: string | null;
 }
 
 export interface Challenge {
@@ -189,6 +193,7 @@ export interface BackendEvidence {
   fullPageHash?: string | null;
   archivedAt?: string | null;
   archiveHashMatches?: boolean | null;
+  archiveCid?: string | null;
 }
 
 export interface BackendChallenge {
@@ -262,6 +267,7 @@ export function mapBackendEvidence(row: BackendEvidence): Evidence {
     full_page_hash: row.fullPageHash,
     archived_at: row.archivedAt,
     archive_hash_matches: row.archiveHashMatches,
+    archive_cid: row.archiveCid,
   };
 }
 

@@ -36,26 +36,34 @@ The backend is **never** the source of truth for anything involving GEN, bonds, 
 
 ## 2. System Architecture
 
-```
-┌────────────┐   wagmi/viem +      ┌─────────────┐
-│  Next.js   │   genlayer-js SDK   │  GenLayer    │
-│  (Vercel)  │◄───────────────────►│  StudioNet   │
-└─────┬──────┘   reads + writes    │  Contract    │
-      │ REST/JSON                  └──────┬───────┘
-      │                                    │ polled by
-┌─────▼──────┐                     ┌───────▼───────┐
-│  Fastify   │◄────────────────────│   Indexer      │
-│  API       │  writes             │   Worker       │
-│  (Fly.io)  │                     │   (Fly.io)     │
-└─────┬──────┘                     └───────────────┘
-      │
-┌─────▼──────┐
-│ Postgres   │
-│ (Fly PG)   │
-└────────────┘
+```mermaid
+flowchart TB
+    User(["Player's wallet"])
+    Web["Next.js frontend\n(Vercel)"]
+    Contract["ClaimGame contract\n(GenLayer StudioNet)"]
+    Validators["GenVM validators\n(LLM judgment + strict_eq /\nprompt_comparative consensus)"]
+    Evidence["Real evidence URLs\n(protocol docs, GitHub, governance forums)"]
+    Indexer["Indexer worker\n(Fly.io, polls every 15min)"]
+    API["Fastify API\n(Fly.io)"]
+    DB[("Postgres\n(Fly PG)")]
+
+    User -- "connect + sign txs" --> Web
+    Web -- "reads (cache-first)\nwrites (direct, wallet-signed)" --> API
+    Web -- "direct reads/writes via\ngenlayer-js (wagmi/viem)" --> Contract
+    Contract -- "gl.nondet.web.render\n(judgment-time fetch)" --> Evidence
+    Contract <-- "consensus check\n(strict_eq for extraction,\ncustom equivalence for verdict)" --> Validators
+    Indexer -- "throttled reads\n(30/min, 500/hr limits)" --> Contract
+    Indexer -- "independent archive fetch\n(same URL, separate infra)" --> Evidence
+    Indexer -- "writes CACHE tables\n(claims, evidence, appeals, ...)" --> DB
+    API -- "reads CACHE +\nwrites NATIVE tables\n(users, sessions)" --> DB
+    API -- "sign-in-with-wallet\n(nonce + signature)" --> User
+
+    style Contract fill:#4a148c,color:#fff
+    style Validators fill:#4a148c,color:#fff
+    style DB fill:#1565c0,color:#fff
 ```
 
-Three Fly.io machines, one app group: `api` (Fastify), `indexer` (polling worker), `pg` (Fly Postgres cluster, 1 primary + optionally 1 replica for read scaling later). `min_machines_running = 1` on `api` and `indexer` guarantees the "backend must be on 24/7" requirement — Fly does not cold-stop them.
+Three Fly.io machines, one app group: `api` (Fastify), `indexer` (polling worker), `pg` (Fly Postgres cluster, 1 primary + optionally 1 replica for read scaling later). `min_machines_running = 1` on `api` and `indexer` guarantees the "backend must be on 24/7" requirement — Fly does not cold-stop them. The indexer and the contract fetch evidence URLs INDEPENDENTLY of each other (v0.3.8) — the contract's fetch is what the judgment actually sees and hashes on-chain; the indexer's fetch is a separate archival copy, verified against the contract's hash but not the same network call.
 
 ## 3. User Journeys
 
@@ -171,11 +179,11 @@ Next.js App Router, route groups mirroring the five prototype screens you suppli
 
 One Intelligent Contract, `ClaimGame`, deployed to StudioNet. Before writing it I will pull current syntax from https://docs.genlayer.com/developers/intelligent-contracts/ideas, https://docs.genlayer.com/, and https://skills.genlayer.com/ — per your instruction, documentation wins over anything I remember. Contract responsibilities: claim/challenge/evidence-reference storage, bond/stake custody (payable writes, ledger fields separate from terms — exactly the pattern from the ShipBond excerpt and your ic7 project's verdict handling you referenced), `submit_for_judgment` nondeterministic block with **live contract-side web fetch** of evidence (not user-submitted text), Equivalence-Principle-reconciled structured verdict, the `NEEDS_HUMAN_REVIEW` fallback with a guaranteed-terminating timeout/mutual-agreement path (§9), and reputation-event emission. Target size: a genuine ~1000+ line production contract (not padded) covering the full claim state machine, five payout exit paths (merge / reject / partial / human-agreement / dispute-timeout), and defensive prompt construction around fetched evidence to resist adversarial page content. Full contract design doc: [genlayer.md](./genlayer.md), written and validated against current docs before Phase 5 code.
 
-## 20. Security Architecture / 25. Threat Model — see [security.md](./security.md)
+## 20. Security Architecture / 25. Threat Model — see [threat-model.md](./threat-model.md)
 
 ## 21. Deployment Architecture
 
-Frontend → Vercel (git-connected, preview deploys per PR). Backend `api` + `indexer` → Fly.io (`fly.toml` per app, `min_machines_running=1`, health checks, auto-restart). Database → Fly Postgres (`fly postgres create`, attached to `api`/`indexer` via `fly postgres attach`, daily backups via Fly's built-in snapshotting). Contract → GenLayer Studio CLI to StudioNet, **you deploy and hand me the address** — I never deploy it myself, per your instruction. Once you give me the deployed address, I store it as `NEXT_PUBLIC_CLAIMGAME_CONTRACT_ADDRESS` (frontend) and `CLAIMGAME_CONTRACT_ADDRESS` (backend indexer) — never hardcoded inline.
+Frontend → Vercel (git-connected, preview deploys per PR). Backend `api` + `indexer` → Fly.io (`fly.toml` per app, `min_machines_running=1`, health checks, auto-restart). Database → Fly Postgres (`fly postgres create`, attached to `api`/`indexer` via `fly postgres attach`, daily backups via Fly's built-in snapshotting). Contract → GenLayer Studio CLI to StudioNet, **you deploy and hand me the address** — I never deploy it myself, per your instruction. Once you give me the deployed address, I store it as `NEXT_PUBLIC_CLAIMGAME_CONTRACT_ADDRESS` (frontend) and `CLAIMGAME_CONTRACT_ADDRESS` (backend indexer) — never hardcoded inline. Full step-by-step procedure (including exactly which commands, in which order, and the real operational gotchas hit along the way): [deployment-runbook.md](./deployment-runbook.md). CI (typecheck, build, deterministic tests, GenVM lint) runs on every PR via `.github/workflows/ci.yml`.
 
 ## 22. Environment Configuration
 

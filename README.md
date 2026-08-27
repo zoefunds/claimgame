@@ -2,6 +2,8 @@
 
 *"Put money behind your interpretation of a protocol."*
 
+[![CI](https://github.com/zoefunds/claimgame/actions/workflows/ci.yml/badge.svg)](https://github.com/zoefunds/claimgame/actions/workflows/ci.yml)
+
 A Web3 strategy game: players interpret ambiguous protocol statements, back their interpretation with a GEN bond, defend it against adversarial challenges backed by real evidence, and let a GenLayer Intelligent Contract reach validator consensus on the verdict.
 
 **Live:** [claim-game.vercel.app](https://claim-game.vercel.app) · API: [claimgame-api.fly.dev](https://claimgame-api.fly.dev/healthz)
@@ -144,9 +146,11 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 
 ## Docs
 
-- [Architecture](docs/architecture.md) — full system spec, all 27 required sections
+- [Architecture](docs/architecture.md) — full system spec, all 27 required sections, with a current Mermaid system diagram
 - [UX/UI](docs/ux.md) — page-by-page spec
 - [GenLayer contract design](docs/genlayer.md) — why the contract is shaped the way it is, the full version-by-version audit-remediation history, deployment steps, troubleshooting
+- [Deployment runbook](docs/deployment-runbook.md) — the exact, tested procedure for every kind of redeploy, plus real operational gotchas hit along the way
+- [Threat model](docs/threat-model.md) — assets, threats, mitigations, and honestly-tracked open items
 
 ## Contract version history
 

@@ -197,6 +197,12 @@ model Evidence {
   archivedContent      String?   @map("archived_content")
   archivedAt           DateTime? @map("archived_at")
   archiveHashMatches   Boolean?  @map("archive_hash_matches")
+  // v0.3.9 — a real CIDv1 (raw codec, sha2-256 multihash) over archivedContent.
+  // Not yet pinned to a live IPFS/Arweave network (needs a pinning-service
+  // credential this project doesn't have), but a genuine, correct content
+  // identifier: if this content is ever pinned by anyone, this CID resolves
+  // to it, because CIDs are derived from content, not assigned.
+  archiveCid           String?   @map("archive_cid")
 
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
