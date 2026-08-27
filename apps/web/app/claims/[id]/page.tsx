@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { contractReads, contractWrites } from "@/lib/contract";
 import { apiGet } from "@/lib/api";
@@ -54,6 +54,7 @@ export default function ClaimDetailPage() {
 
   const [data, setData] = useState<ClaimData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const triedCacheMissFallback = useRef(false);
 
   /**
    * Polling reads from the backend cache (`GET /api/v1/claims/:id`), not
@@ -61,32 +62,7 @@ export default function ClaimDetailPage() {
    * every open tab polling StudioNet's shared RPC every 10s multiplies
    * with concurrent viewers and risks its rate limit, while polling our
    * own Fly-hosted API doesn't touch GenLayer at all. The indexer keeps
-   * this within ~5s of the contract.
-   */
-  const reload = useCallback(async () => {
-    try {
-      const row = await apiGet<BackendClaim>(`/api/v1/claims/${claimId}`);
-      setData({
-        claim: mapBackendClaim(row),
-        versions: (row.versions ?? []).map(mapBackendClaimVersion),
-        evidence: (row.evidence ?? []).map(mapBackendEvidence),
-        challenge: row.challenge ? mapBackendChallenge(row.challenge) : null,
-        resolution: row.resolution ? mapBackendResolution(row.resolution) : null,
-        appeal: row.appeal ? mapBackendAppeal(row.appeal) : null,
-      });
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load claim");
-    }
-  }, [claimId]);
-
-  /**
-   * Direct-from-contract, single-claim read — used ONLY right after this
-   * user's own transaction finalizes (see `ActionPanel`'s `onDone`), so
-   * they see their own action reflected immediately instead of waiting up
-   * to one indexer cycle (~5s). This is a handful of one-off calls tied to
-   * a user action, not a standing poll loop, so it doesn't carry the same
-   * rate-limit exposure as continuous background polling would.
+   * this within one indexer cycle of the contract.
    */
   const reloadFromChain = useCallback(async () => {
     try {
@@ -124,6 +100,37 @@ export default function ClaimDetailPage() {
     }
   }, [claimId]);
 
+  /**
+   * Prefer the backend cache for normal page loads. A newly-created claim
+   * is not in that cache until the centralized indexer runs (every 15 min),
+   * so make one direct read only when the cache reports it missing. This
+   * lets the creator see a finalized claim immediately without turning each
+   * browser tab into a continuous StudioNet poller.
+   */
+  const reload = useCallback(async () => {
+    try {
+      const row = await apiGet<BackendClaim>(`/api/v1/claims/${claimId}`);
+      setData({
+        claim: mapBackendClaim(row),
+        versions: (row.versions ?? []).map(mapBackendClaimVersion),
+        evidence: (row.evidence ?? []).map(mapBackendEvidence),
+        challenge: row.challenge ? mapBackendChallenge(row.challenge) : null,
+        resolution: row.resolution ? mapBackendResolution(row.resolution) : null,
+        appeal: row.appeal ? mapBackendAppeal(row.appeal) : null,
+      });
+      setError(null);
+    } catch (err) {
+      if (err instanceof Error && err.message === "Claim not found") {
+        if (!triedCacheMissFallback.current) {
+          triedCacheMissFallback.current = true;
+          await reloadFromChain();
+        }
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to load claim");
+    }
+  }, [claimId, reloadFromChain]);
+
   useEffect(() => {
     reload();
   }, [reload]);
@@ -159,6 +166,8 @@ export default function ClaimDetailPage() {
           </div>
         </div>
       </header>
+
+      <ClaimExpiryStatus claim={claim} />
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
         <div className="xl:col-span-2 space-y-8">
@@ -291,6 +300,48 @@ function Panel({ label, children }: { label: string; children: React.ReactNode }
       <div className="font-data-label text-data-label text-on-surface-variant mb-3">{label}</div>
       <div className="font-code-sm text-code-sm text-on-surface whitespace-pre-wrap leading-relaxed">
         {children}
+      </div>
+    </div>
+  );
+}
+
+/** Shows the challenge deadline before it becomes eligible for the
+ * permissionless `claim_expired` settlement call. The status only changes
+ * to EXPIRED after somebody submits that on-chain transaction. */
+function ClaimExpiryStatus({ claim }: { claim: Claim }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (claim.status !== "OPEN") return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [claim.status]);
+
+  const deadlineMs = new Date(claim.created_at).getTime() + claim.challenge_window_seconds * 1000;
+  const validDeadline = Number.isFinite(deadlineMs);
+  const windowOpen = validDeadline && now < deadlineMs;
+  const deadlineLabel = validDeadline
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(deadlineMs)
+    : "Unavailable";
+
+  if (claim.status === "EXPIRED") {
+    return (
+      <div className="border border-error/30 bg-error/10 text-error rounded p-4 font-body-sm text-body-sm">
+        This claim expired without a challenge{claim.resolved_at ? ` on ${new Date(claim.resolved_at).toLocaleString()}` : ""}.
+      </div>
+    );
+  }
+
+  if (claim.status !== "OPEN") return null;
+
+  return (
+    <div className="border border-outline-variant bg-surface-container-low rounded p-4 flex flex-col gap-1">
+      <div className="font-data-label text-data-label text-primary uppercase tracking-wider">Challenge Window</div>
+      <div className="font-code-sm text-code-sm text-on-surface">
+        {windowOpen ? `Closes in ${formatRemaining(deadlineMs - now)}` : "Challenge window closed — expiry can now be finalized"}
+      </div>
+      <div className="font-body-sm text-body-sm text-on-surface-variant">
+        Deadline: {deadlineLabel}. {windowOpen ? "A challenge must be submitted before then." : "Anyone can submit the expiry transaction."}
       </div>
     </div>
   );
