@@ -117,6 +117,19 @@ HUMAN_REVIEW_TIMEOUT_SECONDS = 60 * 60 * 24 * 7           # 7 days
 APPEAL_WINDOW_SECONDS = 60 * 60 * 24  # 24 hours after verdict computed
 APPEAL_BOND_WEI = MIN_CLAIM_BOND_WEI  # 10 GEN, same floor as a claim bond
 
+# v0.3.10 — validator-verified official domains: the real fix for
+# set_protocol_official_domains being owner-gated (a single credential, not
+# a decentralized decision). Anyone may PROPOSE that a domain is official
+# for a protocol; VERIFICATION is not a human decision at all — it's a
+# GenVM nondet-consensus check (see verify_official_domain / _run_domain_verification),
+# the exact same leader/validator pattern _run_judgment already uses,
+# applied to a different question. This is the "GenLayer indispensable, not
+# just a better adjudicator" fix: source trust is now validator-decided.
+DOMAIN_PROPOSAL_BOND_WEI = u256(5) * ONE_GEN  # anti-spam bond, cheaper than a claim bond
+DOMAIN_PROPOSAL_STATUS_PROPOSED = "PROPOSED"
+DOMAIN_PROPOSAL_STATUS_VERIFIED = "VERIFIED"
+DOMAIN_PROPOSAL_STATUS_REJECTED = "REJECTED"
+
 MAX_EVIDENCE_PER_CLAIM = 40
 MAX_OBJECTIONS_PER_CLAIM = 40
 MAX_AMENDMENTS_PER_CLAIM = 20
@@ -459,6 +472,37 @@ def _is_verified_primary_source(url: str, official_domains: list) -> bool:
     return False
 
 
+_GITHUB_ORG_URL_RE = re.compile(r'itemprop="url"[^>]*href="([^"]*)"')
+
+
+def _normalize_domain(value: str) -> str:
+    """Strips scheme/www/trailing path from a bare-domain-or-URL string so
+    'https://www.uniswap.org/' and 'uniswap.org' compare equal. Pure string
+    ops, no network — deterministic by construction."""
+    v = value.strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if v.startswith("www."):
+        v = v[4:]
+    return v
+
+
+def _extract_github_org_website(html: str) -> str:
+    """v0.3.10: deterministic extraction of a GitHub org's public 'website'
+    link from its profile page HTML. GitHub renders this as
+    `<a rel="nofollow" itemprop="url" ... href="https://example.com">` —
+    verified against the live github.com/Uniswap page before writing this
+    regex (see docs/genlayer.md's v0.3.10 section for the exact markup
+    checked). Returns "" if not found — never raises, so a markup change on
+    GitHub's side degrades to NO_MATCH rather than crashing the nondet
+    closure (see the module docstring on why closures must never raise)."""
+    match = _GITHUB_ORG_URL_RE.search(html)
+    if not match:
+        return ""
+    return _normalize_domain(match.group(1))
+
+
 # ===========================================================================
 # CONTRACT
 # ===========================================================================
@@ -469,6 +513,10 @@ class ClaimGame(gl.Contract):
     protocols: TreeMap[str, str]          # protocol_name -> category (registry, append/update only)
     seasons: TreeMap[str, str]            # season_id -> JSON {name, starts_at, ends_at}
     next_season_id: u256
+
+    # ---- Validator-verified official domains (v0.3.10) ----
+    domain_proposals: TreeMap[str, str]   # proposal_id -> JSON domain-proposal record
+    next_domain_proposal_id: u256
 
     # ---- Claims ----
     claims: TreeMap[str, str]             # claim_id -> JSON claim record
@@ -509,6 +557,7 @@ class ClaimGame(gl.Contract):
         self.next_evidence_id = u256(1)
         self.next_objection_id = u256(1)
         self.next_bounty_id = u256(1)
+        self.next_domain_proposal_id = u256(1)
 
     # =======================================================================
     # ADMIN
@@ -567,6 +616,141 @@ class ClaimGame(gl.Contract):
         if protocol_name not in self.protocols:
             return []
         return json.loads(self.protocols[protocol_name]).get("official_domains", [])
+
+    def _add_official_domain(self, protocol_name: str, domain: str) -> None:
+        record = json.loads(self.protocols[protocol_name])
+        domains = record.get("official_domains", [])
+        normalized = _normalize_domain(domain)
+        if normalized and normalized not in domains:
+            domains.append(normalized)
+        record["official_domains"] = domains
+        self.protocols[protocol_name] = _dump(record)
+
+    # =======================================================================
+    # VALIDATOR-VERIFIED OFFICIAL DOMAINS (v0.3.10)
+    #
+    # The real fix for set_protocol_official_domains being gated behind a
+    # single owner credential: anyone may PROPOSE a domain is official for
+    # a protocol (bonded, anti-spam); whether it's ACCEPTED is decided by
+    # GenVM validator consensus, not a human — the exact same leader/
+    # validator nondet pattern _run_judgment uses, pointed at a different,
+    # narrower question ("does this GitHub org's public website field match
+    # this domain") instead of an open-ended semantic judgment. This is
+    # deliberately closer to _fetch_and_extract_facts's deterministic
+    # strict_eq design than to _run_judgment's LLM-based one: the check
+    # itself is a structured string comparison, not free-text reasoning,
+    # so there's no reason to involve a model or tolerate disagreement here
+    # at all — either validators independently extract the same website
+    # field from the same fetched page (they will, since the extraction is
+    # pure string parsing) or the GitHub page itself changed between
+    # fetches, which is a legitimate reason to disagree.
+    # =======================================================================
+
+    @gl.public.write.payable
+    def propose_official_domain(self, protocol_name: str, domain: str, github_org: str) -> str:
+        """Permissionless, bonded. `domain` must be a bare domain (no
+        scheme) like "uniswap.org". `github_org` is the GitHub organization
+        (or user) handle whose public profile page will be checked —
+        e.g. "Uniswap" for github.com/Uniswap. The proposer doesn't have to
+        be right; verify_official_domain (below) is what actually decides,
+        via consensus, not this call."""
+        _require(protocol_name in self.protocols, "Unknown protocol — register it first")
+        _require(bool(domain), "domain required")
+        _require("://" not in domain, "domain must be bare (e.g. 'uniswap.org', not a full URL)")
+        _require(bool(github_org), "github_org required")
+        _require_max_len(domain, MAX_SHORT_TEXT_LEN, "domain")
+        _require_max_len(github_org, MAX_SHORT_TEXT_LEN, "github_org")
+        _require(gl.message.value >= DOMAIN_PROPOSAL_BOND_WEI, f"Proposal bond below minimum ({DOMAIN_PROPOSAL_BOND_WEI} wei)")
+
+        proposal_id = _u256_to_str(self.next_domain_proposal_id)
+        self.next_domain_proposal_id = self.next_domain_proposal_id + u256(1)
+
+        self.domain_proposals[proposal_id] = _dump({
+            "id": proposal_id,
+            "protocol": protocol_name,
+            "domain": _normalize_domain(domain),
+            "github_org": github_org,
+            "proposer": str(gl.message.sender_address),
+            "bond_deposited": _u256_to_str(gl.message.value),
+            "status": DOMAIN_PROPOSAL_STATUS_PROPOSED,
+            "created_at": _now_iso(),
+            "resolved_at": None,
+        })
+        return proposal_id
+
+    @gl.public.write
+    def verify_official_domain(self, proposal_id: str) -> None:
+        """Permissionless — anyone can trigger verification once a proposal
+        exists (same pattern as submit_for_judgment/finalize_settlement:
+        the ACTION is open to anyone, the OUTCOME is decided by consensus,
+        not by who called it). Fetches the proposed GitHub org's public
+        profile page, deterministically extracts its listed website (see
+        _extract_github_org_website), and checks it against the proposed
+        domain — checked with strict_eq since this whole pipeline is pure
+        string parsing, not model output: identical fetched bytes must
+        produce identical results across validators, or the page itself
+        changed, which is a legitimate reason to disagree.
+
+        On a match: the domain is added to the protocol's official_domains
+        (immediately usable by _is_verified_primary_source) and the
+        proposer's bond is refunded in full. On no match: the bond is
+        forfeited to the contract owner — not because the owner did
+        anything, but because there's no natural counterparty to refund it
+        to (unlike a claim/challenge pair) and a real forfeiture, not just
+        "try again for free," is what makes the anti-spam bond meaningful."""
+        _require(proposal_id in self.domain_proposals, "Unknown domain proposal")
+        proposal = json.loads(self.domain_proposals[proposal_id])
+        _require(proposal["status"] == DOMAIN_PROPOSAL_STATUS_PROPOSED, "Proposal already resolved")
+
+        github_org = proposal["github_org"]
+        claimed_domain = proposal["domain"]
+
+        def check_github_org_website() -> str:
+            try:
+                html = gl.nondet.web.render(f"https://github.com/{github_org}", mode="html")
+            except Exception:
+                return "FETCH_FAILED"
+            if not html:
+                return "FETCH_FAILED"
+            org_domain = _extract_github_org_website(html)
+            if not org_domain:
+                return "NO_WEBSITE_LISTED"
+            if org_domain == claimed_domain or org_domain.endswith("." + claimed_domain) or claimed_domain.endswith("." + org_domain):
+                return "MATCH"
+            return "NO_MATCH"
+
+        result = gl.eq_principle.strict_eq(check_github_org_website)
+        matched = result == "MATCH"
+
+        proposal["status"] = DOMAIN_PROPOSAL_STATUS_VERIFIED if matched else DOMAIN_PROPOSAL_STATUS_REJECTED
+        proposal["resolved_at"] = _now_iso()
+        proposal["verification_result"] = result if isinstance(result, str) else "UNKNOWN"
+        self.domain_proposals[proposal_id] = _dump(proposal)
+
+        bond = _str_to_u256(proposal["bond_deposited"])
+        proposal["bond_deposited"] = "0"
+        self.domain_proposals[proposal_id] = _dump(proposal)
+
+        if matched:
+            self._add_official_domain(proposal["protocol"], claimed_domain)
+            if bond > u256(0):
+                _send_gen(proposal["proposer"], bond)
+        else:
+            if bond > u256(0):
+                _send_gen(self.owner, bond)
+
+    @gl.public.view
+    def get_domain_proposal(self, proposal_id: str) -> str:
+        _require(proposal_id in self.domain_proposals, "Unknown domain proposal")
+        return self.domain_proposals[proposal_id]
+
+    @gl.public.view
+    def get_domain_proposal_count(self) -> int:
+        # Same pattern as get_claim_count — proposal ids are sequential, so
+        # the frontend derives "the id I just created" the same way it
+        # already does for claims (create_claim's return value isn't
+        # reliably exposed via genlayer-js either).
+        return int(self.next_domain_proposal_id) - 1
 
     @gl.public.write
     def create_season(self, name: str, starts_at_iso: str, ends_at_iso: str) -> str:

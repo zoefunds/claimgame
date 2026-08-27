@@ -312,6 +312,8 @@ export const contractReads = {
   listClaimsByStatus: (status: string) => readJson<unknown[]>("list_claims_by_status", [status]),
   getClaimCount: () => read<number>("get_claim_count"),
   getAppeal: (claimId: string) => readJson<unknown>("get_appeal", [claimId]),
+  getDomainProposal: (proposalId: string) => readJson<unknown>("get_domain_proposal", [proposalId]),
+  getDomainProposalCount: () => read<number>("get_domain_proposal_count"),
 };
 
 // ---------------------------------------------------------------------------
@@ -475,4 +477,23 @@ export const contractWrites = {
 
   finalizeSettlement: (account: Account, claimId: string, onStatus: (s: TxStatus) => void) =>
     writeAndTrack(account, "finalize_settlement", [claimId], onStatus),
+
+  // v0.3.10: propose that a domain is official for a protocol (5 GEN
+  // anti-spam bond) — verify_official_domain (below) is what actually
+  // decides it, via GenVM validator consensus, not this call.
+  proposeOfficialDomain: (
+    account: Account,
+    params: { protocolName: string; domain: string; githubOrg: string },
+    onStatus: (s: TxStatus) => void,
+  ) =>
+    writeAndTrack(
+      account,
+      "propose_official_domain",
+      [params.protocolName, params.domain, params.githubOrg],
+      onStatus,
+      { value: parseGen("5") },
+    ),
+
+  verifyOfficialDomain: (account: Account, proposalId: string, onStatus: (s: TxStatus) => void) =>
+    writeAndTrack(account, "verify_official_domain", [proposalId], onStatus),
 };

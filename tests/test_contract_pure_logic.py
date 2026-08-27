@@ -538,5 +538,88 @@ class TestExtractDeterministicExcerpt(unittest.TestCase):
         self.assertTrue(text.startswith(excerpt[:20]))
 
 
+# ============================================================================
+# Mirrors contract.py's _normalize_domain / _extract_github_org_website
+# (v0.3.10 — validator-verified official domains, replacing the owner-only
+# set_protocol_official_domains gate with GenVM nondet consensus)
+# ============================================================================
+
+
+def normalize_domain(value: str) -> str:
+    v = value.strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if v.startswith("www."):
+        v = v[4:]
+    return v
+
+
+_GITHUB_ORG_URL_RE = re.compile(r'itemprop="url"[^>]*href="([^"]*)"')
+
+
+def extract_github_org_website(html: str) -> str:
+    match = _GITHUB_ORG_URL_RE.search(html)
+    if not match:
+        return ""
+    return normalize_domain(match.group(1))
+
+
+class TestNormalizeDomain(unittest.TestCase):
+    def test_strips_scheme(self):
+        self.assertEqual(normalize_domain("https://uniswap.org"), "uniswap.org")
+        self.assertEqual(normalize_domain("http://uniswap.org"), "uniswap.org")
+
+    def test_strips_www(self):
+        self.assertEqual(normalize_domain("https://www.uniswap.org"), "uniswap.org")
+
+    def test_strips_trailing_path(self):
+        self.assertEqual(normalize_domain("https://uniswap.org/docs/v4"), "uniswap.org")
+
+    def test_bare_domain_unchanged(self):
+        self.assertEqual(normalize_domain("uniswap.org"), "uniswap.org")
+
+    def test_lowercases(self):
+        self.assertEqual(normalize_domain("Uniswap.ORG"), "uniswap.org")
+
+
+class TestExtractGithubOrgWebsite(unittest.TestCase):
+    # Real fixture, fetched live from github.com/Uniswap (2026-08-27) —
+    # see docs/genlayer.md's v0.3.10 section for the exact curl output this
+    # was copied from, not invented markup.
+    REAL_GITHUB_ORG_HTML_FIXTURE = (
+        '<svg aria-hidden="true" class="octicon octicon-link"></svg>\n'
+        '<a rel="nofollow" itemprop="url" class="Link--primary" '
+        'title="https://uniswap.org" href="https://uniswap.org">https://uniswap.org</a>\n'
+        "</li>"
+    )
+
+    def test_extracts_real_github_org_website(self):
+        self.assertEqual(extract_github_org_website(self.REAL_GITHUB_ORG_HTML_FIXTURE), "uniswap.org")
+
+    def test_returns_empty_when_not_present(self):
+        self.assertEqual(extract_github_org_website("<html><body>no website here</body></html>"), "")
+
+    def test_returns_empty_on_empty_input(self):
+        self.assertEqual(extract_github_org_website(""), "")
+
+    def test_deterministic_across_repeated_calls(self):
+        first = extract_github_org_website(self.REAL_GITHUB_ORG_HTML_FIXTURE)
+        for _ in range(5):
+            self.assertEqual(extract_github_org_website(self.REAL_GITHUB_ORG_HTML_FIXTURE), first)
+
+    def test_matches_normalized_claimed_domain(self):
+        # The actual comparison verify_official_domain performs: extracted
+        # org website vs. the proposer's claimed domain, both normalized.
+        org_domain = extract_github_org_website(self.REAL_GITHUB_ORG_HTML_FIXTURE)
+        claimed = normalize_domain("uniswap.org")
+        self.assertEqual(org_domain, claimed)
+
+    def test_rejects_mismatched_claimed_domain(self):
+        org_domain = extract_github_org_website(self.REAL_GITHUB_ORG_HTML_FIXTURE)
+        claimed = normalize_domain("totally-different-site.com")
+        self.assertNotEqual(org_domain, claimed)
+
+
 if __name__ == "__main__":
     unittest.main()
