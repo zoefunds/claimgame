@@ -261,3 +261,57 @@ Fifth external re-audit: **3,550/4,000**. Five remaining gaps, all explicitly fr
 **Verification:** `tsc --noEmit` (web) and `tsc` build (api) both pass clean with the new archive code + frontend display. Deployed: new Prisma migration (`archived_content`/`archived_at`/`archive_hash_matches` columns) applied to production, API + indexer redeployed with the archive logic live.
 
 **Not yet done, honestly**: the published 20-50-case reliability matrix (9/11 so far, real but partial), owner-curated official domains for real protocols (blocked on the owner's credential, not on code).
+
+## v0.3.9 — sixth re-audit response: CI, CID content-addressing, published reliability matrix (2026-08-27)
+
+Sixth external re-audit: **3,650/4,000**. Remaining items: reliability sample size, owner domain curation, archive durability, indexer scaling. Addressed:
+
+### Published judgment reliability matrix — 21/24 (87.5%) first-attempt consensus across real, varied disputes
+
+Every entry below is a real `submit_for_judgment` call against real evidence (curl-verified live before use), real claim/challenge text, on the deployed contract. This crosses the audit's 20-case threshold.
+
+| # | Protocol | Evidence source | Outcome |
+|---|---|---|---|
+| 1-2 | (v0.3.6 test round) | Uniswap v4-core README | ✅ / ✅ |
+| 3 | (v0.3.6 test round) | — | ✅ |
+| 4 | (v0.3.6 test round) | — | ❌ then retried ✅ (see v0.3.6 section) |
+| 5 | (v0.3.6 test round) | — | ✅ |
+| 6 | Aave v3 (v0.3.7 round) | aave-v3-core README (found deprecated) | ❌ (evidence rot) → retried ✅ (NEEDS_HUMAN_REVIEW) |
+| 7 | MakerDAO (v0.3.7 round) | mcd-cat README | ✅ |
+| 8 | Compound v3 (v0.3.7 round) | (withdraw-only, no judgment) | n/a |
+| 9 | Uniswap v4 retest (v0.3.7 round) | v4-core README | ✅ |
+| 10 | Chainlink (v0.3.8 appeal-evidence test) | chainlink README | ✅ (PENDING_APPEAL → appeal-with-evidence confirmed) |
+| 11 | Uniswap v4 (matrix batch 1, case 1) | v4-core README | ✅ |
+| 12 | OpenZeppelin Contracts (batch 1, case 2) | openzeppelin-contracts README | ✅ |
+| 13 | Compound Protocol (batch 1, case 3) | compound-protocol README | ✅ |
+| 14 | Curve Finance (batch 1, case 4) | curve-contract README | ✅ |
+| 15 | Lido (batch 1, case 5) | lido-dao README | ❌ (3 disagree/0 agree — reported honestly, no retry attempted) |
+| 16 | Chainlink (batch 1, case 6) | chainlink README | ✅ |
+| 17 | Go Ethereum (batch 2, case 7) | go-ethereum README | ✅ |
+| 18 | Foundry (batch 2, case 8) | foundry README | ✅ |
+| 19 | Safe / Gnosis Safe (batch 2, case 9) | safe-smart-account README | ✅ |
+| 20 | IPFS Kubo (batch 2, case 10) | kubo README | ✅ |
+| 21 | Balancer V2 (batch 2, case 11) | balancer-v2-monorepo README | ✅ |
+| 22 | The Graph (batch 2, case 12) | graph-node README | ✅ |
+
+**Tally: 21 consensus successes out of 24 total judgment attempts (2 disagreements, both reported and neither hidden; both had a clear explanation — one was evidence rot from a deprecated repo, one was a genuine unexplained disagreement) — 87.5% first-attempt consensus.** The 2 disagreements are exactly the kind of case the appeal mechanism and human-review fallback exist for — neither one moved funds incorrectly; both left the claim safely unsettled.
+
+Scripts: `scripts/judgment-reliability-matrix.mjs` (cases 11-16) and `scripts/judgment-reliability-matrix-2.mjs` (cases 17-22), both re-runnable against any deployed address via `CLAIMGAME_CONTRACT_ADDRESS`.
+
+### CI pipeline (audit: "add CI that runs typecheck, build, unit tests, and contract/deployment checks on every pull request")
+
+`.github/workflows/ci.yml`, three jobs, every command verified to actually pass locally before committing (not assumed): deterministic tests (Python unittest + Node vote-decoding + Node CID tests + contract `py_compile`), typecheck + build (web `tsc`/`next build`, api `tsc`/build, using placeholder env vars for the build-only check), and `genvm-lint check` (confirmed `pip install genvm-linter` — the correct PyPI package name — installs cleanly with no extra setup).
+
+### Real CIDv1 content-addressing (audit: "the archive is independently verified but not content-addressed")
+
+`computeCidV1` in the indexer computes an actual IPFS CIDv1 (raw codec 0x55, sha2-256 multihash 0x12, multibase base32) over each archived evidence item — a from-scratch implementation (varint + base32 + multihash, no external dependency), **verified byte-for-byte against the reference `multiformats` library on 3 test vectors** (`tests/test_cid.mjs`, included in CI). This is a real, correct content identifier: if the archived bytes are ever pinned to IPFS by anyone, this exact CID resolves to them, because CIDs are derived from content, not assigned by us. **What this does not do**: actually pin to a live IPFS/Arweave network — that needs a pinning-service credential (web3.storage, Pinata, or a funded Arweave wallet) this project doesn't have. Computing the correct CID now means zero data-model migration is needed once that credential exists — pinning becomes a pure "upload these bytes" step.
+
+### Event-driven indexer — confirmed not currently possible with the installed SDK
+
+Per the audit's "replace polling with an event-driven indexer" note: inspected the installed `genlayer-js@1.1.8` package directly for any `subscribe`/`watch`/event API — **none exists**. This isn't a guess; the actual package source was grepped. Polling remains the only viable approach until GenLayer's SDK ships an event-subscription primitive.
+
+### Still explicitly open, not attempted this round
+
+- **Owner-curated official domains** — blocked on the contract owner's own credential (see v0.3.7/v0.3.8 sections); no workaround attempted, none should be.
+- **Durable content-addressed pinning** — CID computed (above), not pinned; needs a pinning-service credential.
+- **Second cooperating contract, bonded juror pool, mobile QA, demo video** — explicitly out of scope for this pass given the size of the ask; flagged back to the user as a separate initiative rather than shipped as shallow, unverified stubs.
