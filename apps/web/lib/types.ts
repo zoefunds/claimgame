@@ -90,6 +90,10 @@ export interface Evidence {
    * original source against this fingerprint even though only the
    * excerpt above is stored verbatim. */
   full_page_hash?: string | null;
+  /** v0.3.8 — off-chain archive of the raw page, fetched independently by
+   * our own indexer (not the contract) and verified against full_page_hash. */
+  archived_at?: string | null;
+  archive_hash_matches?: boolean | null;
 }
 
 export interface Challenge {
@@ -183,6 +187,8 @@ export interface BackendEvidence {
   contentHash?: string | null;
   snapshotText?: string | null;
   fullPageHash?: string | null;
+  archivedAt?: string | null;
+  archiveHashMatches?: boolean | null;
 }
 
 export interface BackendChallenge {
@@ -254,6 +260,8 @@ export function mapBackendEvidence(row: BackendEvidence): Evidence {
     content_hash: row.contentHash,
     snapshot_text: row.snapshotText,
     full_page_hash: row.fullPageHash,
+    archived_at: row.archivedAt,
+    archive_hash_matches: row.archiveHashMatches,
   };
 }
 

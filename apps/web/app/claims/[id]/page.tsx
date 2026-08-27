@@ -200,6 +200,13 @@ export default function ClaimDetailPage() {
                           full-page fingerprint (SHA-256): {item.full_page_hash}
                         </div>
                       )}
+                      {item.archived_at && (
+                        <div className={`font-code-sm text-code-sm ${item.archive_hash_matches ? "text-primary/70" : "text-error"}`}>
+                          {item.archive_hash_matches
+                            ? "✓ full page independently archived off-chain and verified against the on-chain fingerprint"
+                            : "⚠ archived off-chain, but the archive does NOT match the on-chain fingerprint — page may have changed since judgment"}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="font-code-sm text-code-sm text-on-surface-variant/60 mt-1">

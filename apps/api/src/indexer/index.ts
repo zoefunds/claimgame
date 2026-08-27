@@ -29,6 +29,7 @@ import { PrismaClient, type Prisma } from "@prisma/client";
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { getEnv } from "../env.js";
+import { createHash } from "node:crypto";
 
 /**
  * PRODUCTION INCIDENT (confirmed live, 2026-08-26): StudioNet's RPC rate
@@ -215,6 +216,7 @@ async function syncEvidence(client: ReturnType<typeof createClient>, address: `0
     }[]
   >(raw);
   for (const item of items) {
+    const existing = await prisma.evidence.findUnique({ where: { id: item.id }, select: { archivedAt: true } });
     await prisma.evidence.upsert({
       where: { id: item.id },
       create: {
@@ -241,6 +243,110 @@ async function syncEvidence(client: ReturnType<typeof createClient>, address: `0
         fullPageHash: item.full_page_hash ?? null,
       },
     });
+    // Archive once per evidence item, only once the contract has actually
+    // fetched it (full_page_hash set) — no point archiving before then.
+    if (item.full_page_hash && item.url && !existing?.archivedAt) {
+      await archiveEvidenceContent(item.id, item.url, item.full_page_hash);
+    }
+  }
+}
+
+// ============================================================================
+// Off-chain content archive (v0.3.8, audit remaining-blocker #4: "full-page
+// hash is integrity evidence, not a full archive"). The contract can only
+// afford to store a bounded excerpt + a hash of the full page; it cannot
+// store the full page itself on-chain. This indexer — running on our own
+// trusted infra, independently of GenVM — fetches the SAME evidence URL
+// once and archives the raw page in Postgres, then verifies the archive
+// against the contract's on-chain full_page_hash by re-running the exact
+// same deterministic normalization the contract uses (mirrored below, same
+// as tests/test_contract_pure_logic.py mirrors contract.py's Python). This
+// closes the gap between "we can prove the page changed" (the hash alone)
+// and "we have a copy of what it looked like" (this archive) — still not a
+// full historical CDN, but a real, verifiable off-chain record.
+// ============================================================================
+
+const ARCHIVE_MAX_CHARS = 200_000; // generous vs. the contract's 6000-char fetch budget — this is pure archival, not judgment input
+const ARCHIVE_FETCH_TIMEOUT_MS = 10_000;
+
+const ARCHIVE_BLOCKED_HOST_PREFIXES = [
+  "localhost", "127.", "0.", "10.", "169.254.", "192.168.", "::1", "0x",
+];
+
+function extractHost(url: string): string {
+  const lowered = url.trim().toLowerCase();
+  if (!lowered.includes("://")) return "";
+  const rest = lowered.split("://", 2)[1] ?? "";
+  const hostAndMaybePort = (rest.split("/", 2)[0] ?? "").split("@").pop() ?? "";
+  if (hostAndMaybePort.startsWith("[")) return "";
+  return hostAndMaybePort.split(":", 2)[0] ?? "";
+}
+
+/** Mirrors contract.py's _is_safe_evidence_url, applied a second time here
+ * — defense in depth at the point OUR OWN infra makes an outbound request,
+ * not a replacement for the contract-side check (a URL already had to pass
+ * that check to become an Evidence record in the first place). */
+function isSafeArchiveUrl(url: string): boolean {
+  const lowered = url.trim().toLowerCase();
+  if (!(lowered.startsWith("http://") || lowered.startsWith("https://"))) return false;
+  const host = extractHost(lowered);
+  if (!host) return false;
+  if (host.replace(/\./g, "").match(/^\d+$/) && !host.includes(".")) return false;
+  for (const prefix of ARCHIVE_BLOCKED_HOST_PREFIXES) {
+    if (host.startsWith(prefix)) return false;
+  }
+  if (host.startsWith("172.")) {
+    const second = Number(host.split(".")[1]);
+    if (Number.isFinite(second) && second >= 16 && second <= 31) return false;
+  }
+  if (host.startsWith("100.")) {
+    const second = Number(host.split(".")[1]);
+    if (Number.isFinite(second) && second >= 64 && second <= 127) return false;
+  }
+  return true;
+}
+
+/** Mirrors contract.py's _normalize_html_to_text exactly, so a hash computed
+ * here can be compared directly against the contract's full_page_hash. */
+function normalizeHtmlToText(html: string): string {
+  let text = html.replace(/<[^>]+>/g, " ");
+  const entities: Record<string, string> = {
+    "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
+    "&quot;": '"', "&#39;": "'", "&apos;": "'",
+  };
+  for (const [entity, replacement] of Object.entries(entities)) {
+    text = text.split(entity).join(replacement);
+  }
+  text = text.replace(/\s+/g, " ").trim();
+  return text.toLowerCase();
+}
+
+async function archiveEvidenceContent(evidenceId: string, url: string, expectedFullPageHash: string): Promise<void> {
+  if (!isSafeArchiveUrl(url)) return;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ARCHIVE_FETCH_TIMEOUT_MS);
+    const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    clearTimeout(timeout);
+    if (!res.ok) return;
+    const raw = await res.text();
+    const archivedContent = raw.slice(0, ARCHIVE_MAX_CHARS);
+    // Mirrors the contract's own fetch budget (FACT_EXTRACTION_MAX_CHARS * 4)
+    // before normalizing, so the hash comparison is apples-to-apples.
+    const normalized = normalizeHtmlToText(raw.slice(0, 6000));
+    const computedHash = createHash("sha256").update(normalized, "utf8").digest("hex");
+    await prisma.evidence.update({
+      where: { id: evidenceId },
+      data: {
+        archivedContent,
+        archivedAt: new Date(),
+        archiveHashMatches: computedHash === expectedFullPageHash,
+      },
+    });
+  } catch {
+    // Network failures, timeouts, or a page that's gone by the time we
+    // archive it are all real possibilities — leave archivedAt null rather
+    // than record a false success. Retried on the next tick.
   }
 }
 

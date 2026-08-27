@@ -186,6 +186,17 @@ model Evidence {
   // against this fingerprint even though only the excerpt is stored
   // verbatim (audit remaining-blocker #3).
   fullPageHash    String?   @map("full_page_hash")
+  // v0.3.8 — off-chain content-addressed archive (audit remaining-blocker
+  // #4: "full-page hash is integrity evidence, not a full archive"). The
+  // indexer (not the contract) fetches the same URL once, independently,
+  // and stores the raw page here — a real archive, off-chain because a
+  // contract can't afford unbounded on-chain storage. archiveHashMatches
+  // records whether re-normalizing THIS archived copy reproduces the
+  // contract's on-chain full_page_hash, so a later reader can tell
+  // whether the archive is provably the same page the judgment saw.
+  archivedContent      String?   @map("archived_content")
+  archivedAt           DateTime? @map("archived_at")
+  archiveHashMatches   Boolean?  @map("archive_hash_matches")
 
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
