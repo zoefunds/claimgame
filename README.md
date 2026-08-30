@@ -8,7 +8,7 @@ A Web3 strategy game: players interpret ambiguous protocol statements, back thei
 
 **Live:** [claim-game.vercel.app](https://claim-game.vercel.app) · API: [claimgame-api.fly.dev](https://claimgame-api.fly.dev/healthz)
 
-**Current deployed contract:** `0xF8aDB04610C531d779B463AdB549515b60E85feA` (v0.3.10, GenLayer StudioNet) — see [Contract version history](#contract-version-history) below for the full audit-remediation timeline.
+**Current deployed contract:** `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` (v0.3.10, GenLayer StudioNet) — see [Contract version history](#contract-version-history) below for the full audit-remediation timeline.
 
 ## Status
 
@@ -31,7 +31,7 @@ A Web3 strategy game: players interpret ambiguous protocol statements, back thei
 
 | Piece | Where | Notes |
 |---|---|---|
-| Contract | GenLayer StudioNet | `0xF8aDB04610C531d779B463AdB549515b60E85feA` — v0.3.10, deployed 2026-08-27, validator-verified official domains live-confirmed — see [genlayer.md](docs/genlayer.md#v0310--validator-verified-official-domains-2026-08-27) |
+| Contract | GenLayer StudioNet | `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` — v0.3.10, deployed 2026-08-30, 4 real product tests / 74/74 checks passed, zero errors — see [genlayer.md](docs/genlayer.md#full-non-admin-method-coverage--4-real-product-tests-7474-checks-passed-zero-errors-2026-08-30) |
 | Frontend | Vercel — [claim-game.vercel.app](https://claim-game.vercel.app) | project `claim-game`, org `adebiyi2002gmailcoms-projects` |
 | API | Fly.io — [claimgame-api.fly.dev](https://claimgame-api.fly.dev) | `min_machines_running=1`, 24/7 |
 | Indexer | Fly.io — `claimgame-indexer` (no public URL, background worker) | `min_machines_running=1` (2 machines), 24/7, polls the contract every 15 minutes with a settled-claim skip |
@@ -166,6 +166,6 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 | v0.3.7 | `0x4a4E1a6C3349E88707158fb15bE2F0f6560029Da` (current contract) | Owner-curated official-domain verification for source tiers (VERIFIED_PRIMARY/PRIMARY_UNVERIFIED/CORROBORATIVE), SHA-256 hash of the full normalized page, appeal-specific evidence with a guaranteed-judged slot — 39/39 methods live-tested; one genuine consensus disagreement hit and retried successfully |
 | v0.3.8 | *(same contract — backend/frontend only)* | 6-case judgment reliability matrix (5/6 first-attempt consensus), off-chain independently-verified evidence archive (indexer fetches + re-normalizes + compares against on-chain hash), and the appeal-with-new-evidence path **confirmed live for the first time** (`raise_appeal` with a real new evidence URL, guaranteed-included, outcome `UPHELD_ORIGINAL`) |
 | v0.3.9 | *(same contract — backend/frontend only)* | CI pipeline, real CIDv1 content-addressing for the archive (verified against the `multiformats` reference library), published 21/24-case reliability matrix, architecture diagram + threat model + deployment runbook |
-| **v0.3.10** | **`0xF8aDB04610C531d779B463AdB549515b60E85feA`** (current) | Validator-verified official domains — replaces the owner-only `set_protocol_official_domains` gate with a permissionless propose/verify flow decided by GenVM validator consensus. **Live-verified**: `uniswap.org` confirmed as Uniswap v4's official domain via real consensus, zero owner action; a negative-control mismatched domain correctly rejected. New `/protocols` page |
+| **v0.3.10** | **`0x7669F31fe5B91E7e7661f6C88a53351fb29662D1`** (current) | Validator-verified official domains — replaces the owner-only `set_protocol_official_domains` gate with a permissionless propose/verify flow decided by GenVM validator consensus. **4 real product tests run 2026-08-30: 74/74 checks passed, zero errors** — full lifecycle w/ appeal or settlement, withdrawal + guard rails, ambiguous dispute + human review, protocol registry + domain verification (real + negative control). New `/protocols` page |
 
 Full narrative for every row above — root causes, exact bugs, live test transcripts — is in [docs/genlayer.md](docs/genlayer.md).

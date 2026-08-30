@@ -2,7 +2,7 @@ import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0xF8aDB04610C531d779B463AdB549515b60E85feA";
+const CONTRACT_ADDRESS = process.env.CLAIMGAME_CONTRACT_ADDRESS || "0x7669F31fe5B91E7e7661f6C88a53351fb29662D1";
 const ONE_GEN = 10n ** 18n;
 const CALL_SPACING_MS = 2400;
 let lastCall = 0;

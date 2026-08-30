@@ -344,3 +344,21 @@ Directly answers the audit's "make GenLayer indispensable, not just a better adj
 **Access-control checks, all correctly rejected**: re-verifying an already-resolved proposal, proposing a domain for an unregistered protocol, proposing with a bond below the 5 GEN minimum.
 
 This closes audit gap #2 for real — not by working around the owner-credential block, but by making the owner unnecessary for this decision entirely.
+
+## Full non-admin method coverage — 4 real product tests, 74/74 checks passed, zero errors (2026-08-30)
+
+Deployed to `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1`. CACHE tables cleared, api/indexer/frontend redeployed. Per explicit instruction — 4 distinct product tests, real detailed data throughout (no placeholders), every non-admin read/write method exercised, zero tolerance for a contract-side error.
+
+Every evidence URL was `curl`-verified live immediately before writing each script (this is what "be careful with details" meant in practice — e.g. confirming `openzeppelin.com`, not `.org`, is OpenZeppelin's actual listed GitHub org website, and confirming `makerdao/dss`'s README is live where an earlier session's `makerdao/mcd-cat` had gone dead).
+
+**Test 1 — Full lifecycle with amendment, objections, bounty, and settlement** (`scripts/product-test-1-full-lifecycle.mjs`): Uniswap v4 PoolManager singleton-architecture dispute. `register_protocol` → `create_claim` → `amend_claim` → `submit_evidence` ×2 (both tiers, one third-party) → `raise_objection` → `respond_to_objection` → `create_bounty` → `contribute_to_bounty` → `submit_challenge` → `submit_for_judgment` (real consensus, landed `NEEDS_HUMAN_REVIEW`) → `propose_human_settlement` (both sides, auto-settled). **32/32 checks passed.**
+
+**Test 2 — Withdrawal mechanics and deadline guard rails** (`scripts/product-test-2-withdrawal-and-guards.mjs`): Compound v3 single-base-asset-market dispute. `create_claim` → `create_bounty` → `claim_expired` correctly rejected pre-window → `withdraw_claim` (bond + bounty refund confirmed) → `submit_challenge`/`submit_evidence`/`claim_dispute_timeout` all correctly rejected against the now-withdrawn/nonexistent state. **14/14 checks passed.**
+
+**Test 3 — Ambiguous dispute → human review** (`scripts/product-test-3-ambiguous-human-review.mjs`): MakerDAO Emergency Shutdown governance-control dispute (real `makerdao/dss` README). `create_claim` → `submit_evidence` → `submit_challenge` → `submit_for_judgment` (real consensus, `NEEDS_HUMAN_REVIEW`) → `claim_dispute_timeout` correctly rejected pre-deadline → `propose_human_settlement` (both sides, auto-settled). **15/15 checks passed.**
+
+**Test 4 — Protocol registry and validator-verified domains** (`scripts/product-test-4-protocol-registry.mjs`): `register_protocol` → `propose_official_domain` for the REAL OpenZeppelin GitHub org website (`openzeppelin.com`) → `verify_official_domain` → consensus reached, `VERIFIED`/`MATCH` → negative control with a mismatched domain → consensus reached, `REJECTED`/`NO_MATCH` → access-control rejections. **13/13 checks passed.**
+
+**Combined: 74/74 checks passed across all 4 tests — every non-admin read and write method exercised at least once, zero contract-side errors, zero consensus disagreements this round.** All 4 claims plus the protocol/domain registry changes are real on-chain data, visible on [claim-game.vercel.app](https://claim-game.vercel.app) now that the indexer has synced.
+
+Methods deliberately left untested per instruction: `transfer_ownership`, `create_season`, `get_owner`, `get_season`, `set_protocol_official_domains` — all owner/admin-gated.
