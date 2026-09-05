@@ -2,6 +2,21 @@
 
 This is the exact, tested procedure used throughout this project's development to redeploy any part of the stack — not aspirational, every step here has actually been run. Follow it top-to-bottom whenever the contract address changes; individual sections stand alone for other redeploys.
 
+## Contract redeploy checklist
+
+Copy this into the PR/commit description for any redeploy and check off each line — every item links to the section below that actually performs it:
+
+- [ ] **Deploy address recorded** — new address from `genlayer deploy` (§1) written down before anything else happens
+- [ ] **Contract/source match verified** — `genvm-lint check contracts/claimgame/contract.py --json` shows `"ok": true` against the EXACT file that was deployed (no uncommitted local diff between what was deployed and what's in git — check with `git status contracts/claimgame/contract.py`)
+- [ ] **All 4 env locations updated** (§2) — `.env.example` files, Fly secrets (api + indexer), Vercel production env
+- [ ] **Pending Prisma migrations applied**, if any (§3)
+- [ ] **CACHE tables cleared** before the new indexer starts syncing (§4) — NATIVE tables left untouched
+- [ ] **API + indexer redeployed**, frontend redeployed (§4, §5)
+- [ ] **`/healthz` confirms the new address** (§6)
+- [ ] **Live smoke tests run against the new address** — at minimum `scripts/product-test-1-full-lifecycle.mjs`; run all 4 `scripts/product-test-*.mjs` for a full redeploy, not just a config change
+- [ ] **Evidence links captured** — the new contract address, the healthz output, and each smoke test's printed transaction hashes recorded in the redeploy's commit message or PR description (not just "it worked" — the actual hashes, so anyone can independently re-check them against the explorer or `claim-game.vercel.app` afterward)
+- [ ] **Docs updated** — any doc that names the previous contract address or version (`README.md`, `docs/genlayer.md`, `docs/threat-model.md`) updated to the new one, since a stale address in docs is worse than no address at all
+
 ## 1. Redeploying the contract (owner-only, never automated)
 
 ```bash

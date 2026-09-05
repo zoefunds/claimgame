@@ -133,7 +133,7 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 - Admin/registry: `register_protocol`, `create_season`, `transfer_ownership`
 - Every read method, plus every access-control and deadline-enforcement rejection path (non-owner calls, challenging a withdrawn claim, double-challenging, unknown claim IDs, appealing twice, finalizing before the window closes)
 
-**Deterministic test suite** (zero network dependency, zero cost, runs in milliseconds — counts below are a snapshot; regenerate with the commands shown, don't trust a hardcoded number): [`tests/test_contract_pure_logic.py`](tests/test_contract_pure_logic.py) — 52 tests via `python3 -m unittest discover -s tests -v` — covering escrow-conservation payout-split math across the full bps range, SSRF URL-safety policy (including the IPv6-bracket bypass fix and CGNAT/numeric-host hardening), per-party evidence-slot selection with source-credibility tiering, bps-agreement rounding, the deterministic HTML-normalization/excerpt-extraction pipeline, and validator-verified-domain matching (including a real GitHub HTML fixture and lookalike-domain rejection tests). [`tests/test_vote_decoding.mjs`](tests/test_vote_decoding.mjs) — 12 tests via `node tests/test_vote_decoding.mjs` — mirrors the frontend's transaction-outcome/vote-tally detection logic, including a regression test for the v0.3.1 false-positive-success incident. [`tests/test_cid.mjs`](tests/test_cid.mjs) — 3 tests via `node tests/test_cid.mjs` — verifies the CIDv1 content-addressing implementation against the reference `multiformats` library. **Total: 67 deterministic tests, zero dependencies beyond the Python/Node standard library.**
+**Deterministic test suite** (zero network dependency, zero cost, runs in milliseconds — counts below are a snapshot; regenerate with `python3 -m unittest discover -s tests -v 2>&1 | tail -5`, don't trust a hardcoded number): [`tests/test_contract_pure_logic.py`](tests/test_contract_pure_logic.py) — 53 tests via `python3 -m unittest discover -s tests -v` — covering escrow-conservation payout-split math across the full bps range, SSRF URL-safety policy (including the IPv6-bracket bypass fix, the doubled-scheme bypass fix, and CGNAT/numeric-host hardening), per-party evidence-slot selection with source-credibility tiering, bps-agreement rounding, the deterministic HTML-normalization/excerpt-extraction pipeline, and validator-verified-domain matching (including a real GitHub HTML fixture and lookalike-domain rejection tests). [`tests/test_adversarial_inputs.py`](tests/test_adversarial_inputs.py) — 12 tests — prompt-injection immunity of the deterministic excerpt-extraction layer, malformed/rotated/doubled-scheme URL bypass attempts, and conflicting-source evidence (proving the deterministic layer never silently picks a "winner" between contradicting sources — that's pushed to the model's judgment step, which is itself held to strict cross-validator agreement). [`tests/test_vote_decoding.mjs`](tests/test_vote_decoding.mjs) — 12 tests via `node tests/test_vote_decoding.mjs` — mirrors the frontend's transaction-outcome/vote-tally detection logic, including a regression test for the v0.3.1 false-positive-success incident. [`tests/test_cid.mjs`](tests/test_cid.mjs) — 3 tests via `node tests/test_cid.mjs` — verifies the CIDv1 content-addressing implementation against the reference `multiformats` library. **Total: 80 deterministic tests, zero dependencies beyond the Python/Node standard library.**
 
 **The judgment-consensus liveness bug — the project's most significant defect, now resolved.** Five consecutive live `submit_for_judgment` failures across versions v0.3.0–v0.3.4 (validators disagreeing, zero state change, `UNDETERMINED`/leader-rotation) were root-caused to the LLM-based evidence-extraction step itself: two independent model calls, even constrained to "exactly 3 verbatim quotes," did not reliably converge. v0.3.5 replaced that step entirely with a deterministic pipeline (HTML normalization → keyword-anchored excerpt selection, both pure functions, no model call) checked with `strict_eq` instead of `prompt_comparative`. Re-tested live against the exact evidence that had failed five times before: **consensus reached.** v0.3.6 additionally added an appeal mechanism as a second line of defense against any future judgment disagreement, live-verified end-to-end (see next paragraph).
 
@@ -164,6 +164,7 @@ Real, live testing against StudioNet — never mocks, never placeholder data —
 - [GenLayer contract design](docs/genlayer.md) — why the contract is shaped the way it is, the full version-by-version audit-remediation history, deployment steps, troubleshooting
 - [Deployment runbook](docs/deployment-runbook.md) — the exact, tested procedure for every kind of redeploy, plus real operational gotchas hit along the way
 - [Threat model](docs/threat-model.md) — assets, threats, mitigations, and honestly-tracked open items
+- [Evidence packet](docs/evidence-packet.md) — one page of reproducible commands and pointers backing every claim in this README
 
 ## Live verification
 
@@ -174,26 +175,21 @@ A reviewer can independently confirm the whole adversarial lifecycle described a
 curl -s https://claimgame-api.fly.dev/healthz
 # → {"status":"ok","contractAddress":"0x...","timestamp":"..."}  — this address must match every claim below
 
-# 2. Run the deterministic test suite (67 tests, zero network dependency)
-python3 -m unittest discover -s tests -v
-node tests/test_vote_decoding.mjs
-node tests/test_cid.mjs
+# 2. Run every locally reproducible check in one command — deterministic
+#    tests, contract lint, install, typecheck, and build for both apps.
+#    Mirrors .github/workflows/ci.yml exactly; green here means CI is green.
+pnpm run verify
+# (equivalent to ./scripts/run-all-checks.sh — see that script if you want
+#  to run any one step in isolation)
 
-# 3. Typecheck + build both apps
-pnpm install
-pnpm --filter @claimgame/api exec prisma generate
-pnpm --filter @claimgame/web typecheck
-pnpm --filter @claimgame/api typecheck
-pnpm --filter @claimgame/api build
-
-# 4. Run a real, live adversarial lifecycle against the deployed contract
+# 3. Run a real, live adversarial lifecycle against the deployed contract
 #    (creates real accounts, locks real testnet GEN, submits a real challenge,
 #    triggers a real contract-side evidence fetch + validator consensus,
 #    and prints the resulting on-chain verdict + payout — nothing mocked)
 node scripts/product-test-1-full-lifecycle.mjs
 ```
 
-Each write in step 4 prints its own transaction hash and the actual `consensus_data.votes` tally read back from `getTransaction`, so a reviewer sees the real vote-by-vote agreement/disagreement, not just a pass/fail summary. Cross-check any resulting claim id against the live app: `https://claim-game.vercel.app/claims/<id>`, and against the raw contract state: `get_claim`/`get_resolution` via `genlayer-js` or the GenLayer Studio explorer at the address printed in step 1.
+Each write in step 3 prints its own transaction hash and the actual `consensus_data.votes` tally read back from `getTransaction`, so a reviewer sees the real vote-by-vote agreement/disagreement, not just a pass/fail summary. Cross-check any resulting claim id against the live app: `https://claim-game.vercel.app/claims/<id>`, and against the raw contract state: `get_claim`/`get_resolution` via `genlayer-js` or the GenLayer Studio explorer at the address printed in step 1.
 
 ## Contract version history
 

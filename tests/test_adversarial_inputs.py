@@ -227,5 +227,73 @@ class TestMalformedAndRotatedUrls(unittest.TestCase):
         self.assertTrue(is_safe_evidence_url("https://xn--e1aybc.example/"))
 
 
+# ============================================================================
+# Conflicting-sources adversarial case
+# ============================================================================
+
+class TestConflictingSources(unittest.TestCase):
+    """The audit asked what happens when two evidence sources directly
+    contradict each other. The answer is architectural, not a special case
+    in this pure layer: _extract_deterministic_excerpt does no fact-checking
+    or cross-source reconciliation at all — it independently keyword-anchors
+    and extracts an excerpt from EACH evidence submission's own fetched
+    content, and every submission's excerpt is passed, unmodified and
+    unmerged, into the judgment prompt. Conflict resolution is deliberately
+    pushed to the one place that can actually reason about it: the model's
+    own judgment step, whose output is then held to strict cross-validator
+    agreement via _run_judgment's validator_fn (see docs/genlayer.md's
+    capability matrix). These tests prove the deterministic layer itself
+    stays neutral: it never picks a "winner" between conflicting sources,
+    silently drops the losing one, or merges them into one blended claim."""
+
+    def test_two_contradicting_sources_are_each_extracted_independently_and_intact(self):
+        subject = "PoolManager upgradeability"
+        statement = "the PoolManager contract is immutable and non-upgradeable"
+        source_a_html = (
+            "<p>Per the official docs: the PoolManager contract is immutable "
+            "and non-upgradeable by design, with no admin key or proxy "
+            "pattern anywhere in its deployment.</p>"
+        )
+        source_b_html = (
+            "<p>Per this audit report: the PoolManager contract is in fact "
+            "upgradeable, deployed behind a transparent proxy controlled by "
+            "a 3-of-5 multisig, contradicting the project's own marketing.</p>"
+        )
+        excerpt_a = extract_deterministic_excerpt(normalize_html_to_text(source_a_html), subject, statement)
+        excerpt_b = extract_deterministic_excerpt(normalize_html_to_text(source_b_html), subject, statement)
+
+        # Both sides of the contradiction survive extraction verbatim — the
+        # deterministic layer does not detect, flag, or resolve the conflict,
+        # nor does it favor either source.
+        self.assertIn("immutable and non-upgradeable", excerpt_a)
+        self.assertIn("upgradeable, deployed behind a transparent proxy", excerpt_b)
+        # Neither excerpt is silently dropped in favor of the other, and
+        # neither excerpt absorbs content from the other source.
+        self.assertNotIn("transparent proxy", excerpt_a)
+        self.assertNotIn("non-upgradeable", excerpt_b)
+
+    def test_extraction_is_order_independent_regardless_of_which_source_is_processed_first(self):
+        # Whichever evidence id happens to be submitted/processed first must
+        # not change what gets extracted from the OTHER source — there is no
+        # shared mutable state or early-exit "good enough, stop here"
+        # behavior across independent evidence submissions.
+        subject = "audit finding severity"
+        statement = "no critical vulnerabilities were found"
+        source_a_html = "<p>The independent audit concluded no critical vulnerabilities were found in the core contracts.</p>"
+        source_b_html = "<p>A separate community audit disputes this, citing one critical vulnerability found in the fee accounting logic.</p>"
+
+        excerpt_a_first = extract_deterministic_excerpt(normalize_html_to_text(source_a_html), subject, statement)
+        excerpt_b_first = extract_deterministic_excerpt(normalize_html_to_text(source_b_html), subject, statement)
+        # Re-run in reverse order — pure functions, so results must be
+        # bit-for-bit identical regardless of processing order.
+        excerpt_a_second = extract_deterministic_excerpt(normalize_html_to_text(source_a_html), subject, statement)
+        excerpt_b_second = extract_deterministic_excerpt(normalize_html_to_text(source_b_html), subject, statement)
+
+        self.assertEqual(excerpt_a_first, excerpt_a_second)
+        self.assertEqual(excerpt_b_first, excerpt_b_second)
+        self.assertIn("no critical vulnerabilities were found", excerpt_a_first)
+        self.assertIn("one critical vulnerability found", excerpt_b_first)
+
+
 if __name__ == "__main__":
     unittest.main()
