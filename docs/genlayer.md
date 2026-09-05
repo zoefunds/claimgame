@@ -4,7 +4,7 @@ File: [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) �
 
 ## Why GenLayer, specifically here
 
-The judgment step — "does this interpretation faithfully capture an ambiguous statement, given real evidence" — cannot be resolved by deterministic code, and per the review team's rule it must not be "an AI app with GenLayer attached": the contract itself fetches evidence and reaches validator consensus on a structured verdict that directly moves GEN. That's the load-bearing use of GenLayer here — not a chat feature, not "better AI answers."
+The judgment step — "does this interpretation faithfully capture an ambiguous statement, given real evidence" — cannot be resolved by deterministic code: the contract itself fetches evidence and reaches validator consensus on a structured verdict that directly moves GEN. That's the load-bearing use of GenLayer here — not a chat feature bolted onto an otherwise-centralized app, not "better AI answers."
 
 ## API surface used (verified against docs.genlayer.com / skills.genlayer.com)
 
@@ -422,3 +422,12 @@ Re-ran the same 4 product tests used for v0.3.10's coverage pass, against the ne
 **Combined: 74/74 checks passed, zero contract-side errors, zero consensus disagreements.**
 
 **Operational note, caught and fixed during this redeploy:** immediately after the CACHE truncate, the *previous* indexer machine — still running its old in-process config in the few seconds before the rolling redeploy replaced it — fired one more scheduled poll against the *old* contract and re-inserted its full historical data (since `indexer_cursor` had just been cleared, that poll treated it as a full resync). This produced a brief window where the API served 3 stale claims with their original `2026-08-30` timestamps instead of the new contract's fresh data. Confirmed via `fly logs --app claimgame-indexer`: the old process's last tick landed at `16:09:51`, 44 seconds before its container rebooted into the new deploy at `16:10:35`. Fixed by re-running the CACHE truncate once both indexer machines were confirmed on the new deployment/address (`fly machines list` showing both machines on the same image digest as the redeploy) — after which the indexer resynced cleanly with only the new contract's real data. No corruption of on-chain state occurred at any point; this was purely a transient off-chain cache artifact from the redeploy race, and is now reflected in the redeploy checklist in [`docs/deployment-runbook.md`](deployment-runbook.md#contract-redeploy-checklist) (verify both/all indexer machines are on the new deploy before trusting a post-truncate resync).
+
+## Backend/frontend follow-up: faster indexer, instant Hunt Board (2026-09-05)
+
+Two changes to how the frontend surfaces contract state, no contract redeploy involved:
+
+- **Indexer poll interval tightened from 15 to 5 minutes** (`POLL_INTERVAL_MS` in `apps/api/src/indexer/index.ts`). At CLAIMGAME's current claim volume, a fresh claim sitting unlisted on the Hunt Board for up to 15 minutes was worse than the rate-limit headroom the longer interval bought. `ACTIVE_CLAIM_CAPACITY_WARNING` was lowered from 12 to 5 active claims to match the tighter per-tick RPC budget under StudioNet's 500-requests/hour cap. Redeployed and confirmed live via `fly logs`: consecutive ticks now land ~5 minutes apart instead of ~15.
+- **Hunt Board chain-reconciliation fallback** (`apps/web/app/claims/page.tsx`) — mirrors the claim-detail page's existing `reloadFromChain` pattern. Once per page mount (never on every 8s poll, to avoid multiplying StudioNet RPC load across open tabs), the list compares the cache against on-chain `get_claim_count` and directly fetches any claim id the cache doesn't have yet, merging it in immediately. The next successful cache poll transparently supersedes it once the indexer catches up. Verified live by patching `window.fetch` in the deployed app and confirming the reconciliation call to `studio.genlayer.com/api` fires exactly once per mount, not on every poll tick.
+
+Net effect: a claim created from the frontend now appears on both its own detail page (already instant, via the existing cache-miss fallback) and the Hunt Board list (previously up to a 15-minute wait, now effectively immediate via the chain fallback, with the cache catching up within 5 minutes regardless).

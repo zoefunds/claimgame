@@ -1,5 +1,7 @@
 # CLAIMGAME — UX/UI Architecture (Phase 3)
 
+Status: **this is the original Phase-3 discovery-phase UX spec, written before implementation and not updated afterward.** The visual language (design tokens, component styling) shipped close to as proposed — see the Design tokens section below, still accurate. The **Navigation and Pages sections do not match what was actually built**: several proposed pages/nav items were cut (Seasons, Notifications, standalone Challenge/Defense/Resolution routes — their functionality lives inline on the claim detail page's action panel instead), the Create Claim flow shipped as one form, not an 8-step wizard, and `/protocols` (added in v0.3.10, after this doc was written) isn't mentioned here at all. For the real current pages and nav, see `apps/web/components/Sidebar.tsx` and `apps/web/app/` directly.
+
 Visual language extracted from your prototypes (`active-investigation.html`, `hunt-board.html`, `landingpage.html`, `leaderboard.html`, `DESIGN.md`) — read as reference, not copied verbatim, and extended to cover every screen ClaimGame.md requires that wasn't prototyped.
 
 ## Design tokens (source of truth → `apps/web/tailwind.config.ts` — `packages/ui` was planned but never populated; this is where tokens actually live)
@@ -8,7 +10,7 @@ Carried forward as-is from `DESIGN.md`: the "Protocol Investigative Interface" s
 
 ## Navigation
 
-Persistent left sidebar (desktop) / top bar + bottom-safe mobile nav: **Home · Hunt Board · My Cases · Create Claim · Leaderboard · Seasons · Profile · Notifications · Settings · How It Works**. Wallet connect state and GEN balance live in the sidebar header, matching the prototypes.
+Persistent left sidebar (desktop): as proposed here, but the actual shipped nav is **Hunt Board · My Cases · Leaderboard · Protocol Registry · Profile**, with **New Claim** as a standalone button and **Support** (→ How It Works) / **Settings** in a footer group (`apps/web/components/Sidebar.tsx`) — Seasons and Notifications were never built as pages, and Protocol Registry (`/protocols`, added v0.3.10) isn't in this original list. Wallet connect state lives in the sidebar header, matching the prototypes.
 
 ## Pages
 

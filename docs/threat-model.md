@@ -43,7 +43,7 @@ Scope: the deployed system as of v0.3.11 (contract `0x4F3789881344cB7a5176b19eEA
 
 | Threat | Mitigation | Status |
 |---|---|---|
-| Backend/indexer diverges from on-chain truth | Indexer is the ONLY writer to CACHE tables; no API route writes them directly. A stale/wrong cache is detectable via `/api/v1/indexer/status` (staleness threshold) but the frontend still falls back to direct contract reads for the user's own just-submitted actions. | Mitigated for detectability |
+| Backend/indexer diverges from on-chain truth | Indexer is the ONLY writer to CACHE tables; no API route writes them directly. A stale/wrong cache is detectable via `/api/v1/indexer/status` (staleness threshold), and the frontend falls back to direct contract reads both for a user's own just-submitted claim (claim detail page) and for reconciling the Hunt Board list against `get_claim_count` (added 2026-09-05). | Mitigated for detectability |
 | Session/auth bypass | Wallet-based sign-in (nonce + signature, no passwords), httpOnly cookie, `SameSite=None; Secure` for the cross-origin frontend/backend split, refresh-token rotation. | Mitigated |
 | Indexer used as an SSRF proxy via its new archive-fetch feature | Same host-blocklist check applied independently at the point the indexer makes the request (defense in depth on top of the contract-level check evidence already had to pass). | Mitigated as a floor |
 | DB credential/secret leakage | All secrets are Fly/Vercel-managed env vars, never committed; `.env.local`/`.env` gitignored; verified no secrets in any commit this project's history. | Mitigated |
@@ -56,7 +56,7 @@ Scope: the deployed system as of v0.3.11 (contract `0x4F3789881344cB7a5176b19eEA
 
 ## 4. Known open items (tracked, not silently accepted)
 
-1. **Judgment reliability sample size** — 9-17/11-19 first-attempt consensus depending on the latest matrix run (see `docs/genlayer.md`), still below a 20-50 case published target.
+1. **Judgment reliability sample size** — 21/24 (87.5%) first-attempt consensus published (see `docs/genlayer.md`), still below a 20-50 case target for very large bonds.
 2. **Source verification no longer requires owner action (fixed in v0.3.10)** — `propose_official_domain`/`verify_official_domain` replaced the owner-gated path with validator consensus; `set_protocol_official_domains` still exists as an owner-only shortcut but is no longer the only way to reach `VERIFIED_PRIMARY`.
 3. **Archive durability** — off-chain archive is database-hosted, not yet pinned to IPFS/Arweave (needs a pinning-service credential).
 4. **Indexer scaling** — polling-bound, no event-driven alternative exists in the current `genlayer-js` SDK (confirmed by inspecting the installed package for any subscribe/watch API — none found).

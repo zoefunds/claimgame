@@ -7,7 +7,7 @@ A single page pointing at reproducible proof for every claim this project makes.
 - **Contract address:** `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6` (v0.3.11, GenLayer StudioNet)
 - **Live app:** https://claim-game.vercel.app
 - **API health check:** `curl -s https://claimgame-api.fly.dev/healthz` — returns the currently-live contract address; cross-check it against the address above before trusting anything else here
-- **Source of the deployed contract:** [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) (2,128 lines, 43 public methods — 22 view / 21 write; verify with `wc -l` and `genvm-lint check contracts/claimgame/contract.py --json`)
+- **Source of the deployed contract:** [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) (2,146 lines, 43 public methods — 22 view / 21 write; verify with `wc -l` and `genvm-lint check contracts/claimgame/contract.py --json`)
 
 ## Test commands
 
@@ -30,7 +30,7 @@ node scripts/product-test-1-full-lifecycle.mjs   # live, on-chain, not mocked �
 
 The strongest evidence is that the backend structurally cannot do the job the contract does:
 
-- The indexer (`apps/indexer`) only ever calls read methods against the contract and writes to CACHE-tier Postgres tables — it never calls a write method. Verify: `grep -rn "writeContract" apps/indexer/` returns nothing.
+- The indexer (`apps/api/src/indexer`) only ever calls read methods against the contract and writes to CACHE-tier Postgres tables — it never calls a write method. Verify: `grep -rn "writeContract" apps/api/src/indexer/` returns nothing.
 - The API (`apps/api`) never writes to a CACHE table directly — only the indexer does, and only by replaying on-chain events. The API cannot manufacture a verdict, change claim status, or move funds. Verify: `grep -rn "prisma.resolution.create\|prisma.claim.update" apps/api/src/` — every hit traces back to an indexer-only code path, not an API route.
 - All fund movement flows through one function, `_send_gen`, called only from `_settle_claim`, called only from consensus-gated write methods (`submit_for_judgment`, `raise_appeal`, `finalize_settlement`, `propose_human_settlement`, `claim_dispute_timeout`). Verify: `grep -n "_send_gen\|def _settle_claim" contracts/claimgame/contract.py`.
 - Full capability matrix — every write method's authorization, state transition, value movement, and consensus method — is in [`docs/genlayer.md`](genlayer.md#contract-capability-matrix).
@@ -47,6 +47,7 @@ The strongest evidence is that the backend structurally cannot do the job the co
 ## Engineering — where to look
 
 - **One reviewer path:** clone → `pnpm install` → `pnpm run verify` → `node scripts/product-test-1-full-lifecycle.mjs` (all in [README.md](../README.md#live-verification)).
+- **Indexer poll interval tightened 15min → 5min** (2026-09-05) and the Hunt Board list now has a one-time chain-reconciliation fallback (`apps/web/app/claims/page.tsx`, mirroring the claim-detail page's `reloadFromChain`) — a freshly-created claim no longer waits out a full indexer cycle to appear.
 - **Release checklist:** [`docs/deployment-runbook.md#contract-redeploy-checklist`](deployment-runbook.md#contract-redeploy-checklist) — deploy address, env sync, cache rebuild, contract/source match, live smoke tests, captured evidence links.
 - **Documentation truth audit:** every stale version/address/count reference found and fixed, logged in [`docs/genlayer.md`](genlayer.md) under "v0.3.11 — documentation truth audit + capability matrix."
 - **Known, disclosed gap:** the GitHub Actions CI badge has never passed — this is an account-billing setting on a private repo (`gh api repos/.../actions/permissions` shows Actions enabled but every run shows `startup_failure`, 0 jobs), not a workflow defect. Disclosed directly under the badge in the README rather than hidden or silently removed. `pnpm run verify` reproduces every check that workflow would run.

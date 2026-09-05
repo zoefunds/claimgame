@@ -44,7 +44,7 @@ flowchart TB
     Contract["ClaimGame contract\n(GenLayer StudioNet)"]
     Validators["GenVM validators\n(LLM judgment + strict_eq /\nprompt_comparative consensus)"]
     Evidence["Real evidence URLs\n(protocol docs, GitHub, governance forums)"]
-    Indexer["Indexer worker\n(Fly.io, polls every 15min)"]
+    Indexer["Indexer worker\n(Fly.io, polls every 5min)"]
     API["Fastify API\n(Fly.io)"]
     DB[("Postgres\n(Fly PG)")]
 
@@ -78,7 +78,7 @@ Three Fly.io machines, one app group: `api` (Fastify), `indexer` (polling worker
 
 ## 4. Game Mechanics (economics detail now lives directly in `contracts/claimgame/contract.py`'s constants and comments — e.g. `MIN_CLAIM_BOND_WEI`, `MIN_CHALLENGE_MULTIPLIER_BPS`, `APPEAL_BOND_WEI` — no separate game-economy.md was ever created)
 
-Claim → Challenge → Evidence → Judgment → Resolution → Reputation → Progression, exactly as specified in ClaimGame.md. Difficulty (EASY/AMBIGUOUS/HARD/EXTREME) is **derived**, not author-set: computed from (a) number of independent evidence sources, (b) whether declared-vs-observed contradictions exist, (c) historical semantic-precedent similarity. The backend computes this score from indexed data; it is cosmetic metadata, never fed back into the contract as authoritative.
+Claim → Challenge → Evidence → Judgment → Resolution → Reputation → Progression, exactly as specified in ClaimGame.md. **Correction — this changed during implementation**: this section originally proposed difficulty (EASY/AMBIGUOUS/HARD/EXTREME) as backend-derived from evidence-source count/contradictions/precedent similarity, but the actual shipped design has the claim's creator set it directly as a `create_claim` parameter (`contracts/claimgame/contract.py`'s `create_claim(..., difficulty: str, ...)`, surfaced as a form field in `apps/web/app/claims/new/page.tsx`) — it is cosmetic metadata either way, never fed back into the contract as authoritative for judgment, but it is author-set, not derived.
 
 ## 5. Claim Lifecycle (state machine, canonical, lives in the contract)
 
@@ -100,7 +100,7 @@ Challenge = a bonded counter-interpretation attached to an existing claim, refer
 
 ## 7. Evidence Lifecycle
 
-Evidence items are submitted off-chain-content, on-chain-referenced: the **URL/hash/tx-reference** is what's stored on-chain (cheap, immutable pointer); the actual page content is fetched live by the contract's web-access capability at judgment time — never trusted from the submitter's own restated text. This directly satisfies the review team's "must check real evidence, not user-submitted text alone" requirement. Screenshots/images are pinned (IPFS or equivalent content-addressed store, referenced by hash) and passed through GenLayer's image-input capability at judgment time if the model needs to inspect them.
+Evidence items are submitted off-chain-content, on-chain-referenced: the **URL/hash/tx-reference** is what's stored on-chain (cheap, immutable pointer); the actual page content is fetched live by the contract's web-access capability at judgment time — never trusted from the submitter's own restated text. This is a deliberate design requirement: real evidence, not user-submitted text alone. Screenshots/images are pinned (IPFS or equivalent content-addressed store, referenced by hash) and passed through GenLayer's image-input capability at judgment time if the model needs to inspect them.
 
 ## 8. GenLayer Judgment Lifecycle
 
@@ -111,7 +111,7 @@ Evidence items are submitted off-chain-content, on-chain-referenced: the **URL/h
 5. Branch on verdict + confidence per §9.
 6. State transition + fund settlement + reputation event, all inside the same call, ledger-zero-then-transfer ordered (see §17 Contract Architecture).
 
-This is the part conventional deterministic code cannot do: judging whether a natural-language interpretation is faithful to a source statement, given contradicting real-world evidence, is exactly the class of problem GenLayer's LLM+consensus model exists for — not "better AI answers" as a product (which the review explicitly disallows), but a **contract-enforced, validator-checked outcome** that moves real GEN.
+This is the part conventional deterministic code cannot do: judging whether a natural-language interpretation is faithful to a source statement, given contradicting real-world evidence, is exactly the class of problem GenLayer's LLM+consensus model exists for — not "better AI answers" as a bolted-on feature, but a **contract-enforced, validator-checked outcome** that moves real GEN.
 
 ## 9. Safety / Low-Confidence Handling
 
@@ -125,7 +125,7 @@ confidence == LOW  OR malformed OR evidence       → NEEDS_HUMAN_REVIEW
 
 `NEEDS_HUMAN_REVIEW` never auto-releases funds. It requires **either**:
 - `settle_human_agreement(claim_id, payout_bps)` — both claimant and challenger co-sign (two separate txs, contract checks both addresses submitted matching terms) — mutual agreement path, **or**
-- `claim_dispute_timeout(claim_id)` after a configurable review-timeout window (e.g. 7 days) — funds return to their original depositors 50/50-of-what-they-put-in (reward back to sponsor-side context aside — for ClaimGame specifically: claim bond back to claimant, challenge stake back to challenger; nobody profits from an inconclusive case). This guarantees no fund is ever permanently stuck, satisfying the review team's "must not lead to an undetermined status" requirement without making the contract too strict to reach consensus — the contract doesn't require a clean verdict to make progress, it just requires *some* path to always terminate.
+- `claim_dispute_timeout(claim_id)` after a configurable review-timeout window (e.g. 7 days) — funds return to their original depositors 50/50-of-what-they-put-in (reward back to sponsor-side context aside — for ClaimGame specifically: claim bond back to claimant, challenge stake back to challenger; nobody profits from an inconclusive case). This guarantees no fund is ever permanently stuck without making the contract too strict to reach consensus — the contract doesn't require a clean verdict to make progress, it just requires *some* path to always terminate.
 
 ## 10. Bond / Economic Model — see the constants block at the top of `contracts/claimgame/contract.py` for actual current values (no separate game-economy.md exists)
 
@@ -170,7 +170,7 @@ Every CACHE table carries `contract_tx_hash`, `synced_at`, and is uniquely keyed
 
 ## 16. API Architecture
 
-REST, versioned under `/api/v1`. JSON:API-ish but pragmatic — plain JSON envelopes: `{data, meta, error}`. Auth via JWT cookie for writes to NATIVE tables; CACHE-table reads are public/unauthenticated (claims, evidence, leaderboards are public info). Pagination: cursor-based (`?cursor=&limit=`, max limit 50). Rate limiting: per-IP + per-wallet token bucket (Fastify rate-limit plugin, backed by Postgres or in-memory since single-region initially). Idempotency: write endpoints that trigger notifications/side-effects accept an `Idempotency-Key` header. Full endpoint list ships in [api.md](./api.md).
+REST, versioned under `/api/v1`. JSON:API-ish but pragmatic — plain JSON envelopes: `{data, meta, error}`. Auth via JWT cookie for writes to NATIVE tables; CACHE-table reads are public/unauthenticated (claims, evidence, leaderboards are public info). Pagination: cursor-based (`?cursor=&limit=`, max limit 50). Rate limiting: `@fastify/rate-limit`, registered in [`apps/api/src/server.ts`](../apps/api/src/server.ts) — real, shipped. **Two corrections vs. this original proposal**: the `Idempotency-Key` header was proposed here but never actually built (no route reads it), and no separate `api.md` was ever created — the actual, current endpoint list is the route files themselves: [`apps/api/src/routes/`](../apps/api/src/routes/).
 
 ## 17. Frontend Architecture
 
@@ -192,26 +192,27 @@ Frontend → Vercel (git-connected, preview deploys per PR). Backend `api` + `in
 
 ## 23. Folder Structure
 
+**Correction — the tree below was the original proposal; `packages/` was never populated.** The actual current layout:
 ```
 CLAIMGAME/
 ├── apps/
 │   ├── web/                 # Next.js frontend (Vercel)
 │   └── api/                 # Fastify backend + indexer worker (Fly.io)
 ├── contracts/
-│   └── claimgame/           # the single Intelligent Contract + its tests
-├── packages/
-│   ├── ui/                  # shared Tailwind design system (from your prototypes)
-│   ├── config/              # shared eslint/tsconfig
-│   └── types/               # shared TS types (claim/challenge/evidence DTOs)
-├── scripts/                 # Python file-op scripts, per your workflow requirement
-├── tests/                   # cross-cutting integration/e2e tests
+│   └── claimgame/           # the single Intelligent Contract
+├── packages/                # ui/, config/, types/ subdirs exist but are empty —
+│                             # planned for shared code, never populated; Tailwind
+│                             # tokens live in apps/web/tailwind.config.ts instead,
+│                             # and components live directly in apps/web/components/
+├── scripts/                 # live StudioNet integration/product-test scripts
+├── tests/                   # deterministic unit tests (Python + Node)
 ├── docs/                    # this file + architecture.md siblings
 ├── .env.example
 ├── .gitignore
 ├── README.md
 └── package.json             # pnpm workspace root
 ```
-Monorepo (pnpm workspaces + Turborepo) because web/api/contract share types and this keeps the "no fake blockchain" contract types in sync across layers automatically.
+Monorepo (pnpm workspaces + Turborepo) — web/api/contract share types this way.
 
 ## 24. Testing Strategy / 27. Development Milestones — no separate testing.md or ClaimGame.md exist. Current testing strategy: deterministic unit tests in [`tests/`](../tests/) (`python3 -m unittest discover -s tests`, `node tests/test_vote_decoding.mjs`, `node tests/test_cid.mjs`), live StudioNet integration scripts in [`scripts/`](../scripts/), and the full version-by-version live-test history in [docs/genlayer.md](./genlayer.md).
 
