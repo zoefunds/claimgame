@@ -2,7 +2,7 @@
 
 Visual language extracted from your prototypes (`active-investigation.html`, `hunt-board.html`, `landingpage.html`, `leaderboard.html`, `DESIGN.md`) — read as reference, not copied verbatim, and extended to cover every screen ClaimGame.md requires that wasn't prototyped.
 
-## Design tokens (source of truth → `packages/ui`)
+## Design tokens (source of truth → `apps/web/tailwind.config.ts` — `packages/ui` was planned but never populated; this is where tokens actually live)
 
 Carried forward as-is from `DESIGN.md`: the "Protocol Investigative Interface" system — deep-navy surface stack (`#0b1326` → `#2d3449`), cyan primary (`#00dbe9`/`#dbfcff`), indigo secondary (`#c0c1ff`), amber tertiary (`#fed639`) for warnings/pending states, 4px-radius "severe and functional" shapes, Inter for UI text, JetBrains Mono for anything cryptographic/numeric (addresses, GEN amounts, tx hashes, timestamps). Zero drop shadows — depth via tonal layering only. This is CLAIMGAME's distinctive identity (a "Detective Dashboard," not a generic Web3 neon-glow template), reused across every screen below rather than reinvented per page.
 
@@ -35,6 +35,6 @@ Persistent left sidebar (desktop) / top bar + bottom-safe mobile nav: **Home · 
 - **Error**: inline, non-blocking for read failures (stale-data banner + retry); modal/blocking only for a failed write the user must acknowledge.
 - **Mobile**: single-column stacks, bottom sheet for the stake/sign action panel instead of a sticky sidebar, top nav collapses to a menu icon (prototyped in `active-investigation.html`'s mobile header).
 
-## Component inventory (→ `packages/ui`)
+## Component inventory (→ `apps/web/components/` — `packages/ui` was planned but never populated; components live directly in the web app instead)
 
 Case Card, Evidence Card (URL / tx / screenshot variants), Difficulty Badge, Status Badge, GEN Amount (mono, icon-paired), Stake Input, Transaction Status Toast, Verdict Panel, Version Timeline, Objection Thread Item, Leaderboard Row, Reputation Stat Block, Progress Bar (geometric, non-rounded per DESIGN.md), Season Countdown, Wallet Connect Button, Protocol/Difficulty/Reward filter dropdowns.

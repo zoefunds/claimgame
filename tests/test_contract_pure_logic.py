@@ -49,6 +49,8 @@ def is_safe_evidence_url(url: str) -> bool:
     if not (lowered.startswith("http://") or lowered.startswith("https://")):
         return False
     rest = lowered.split("://", 1)[1]
+    if "://" in rest:
+        return False  # v0.3.11: doubled/nested scheme — see contract.py's _is_safe_evidence_url
     host_and_maybe_port = rest.split("/", 1)[0].split("@")[-1]
     if host_and_maybe_port.startswith("["):
         return False  # bracketed IPv6 literal — reject outright
@@ -123,6 +125,15 @@ class TestEvidenceUrlSafety(unittest.TestCase):
     def test_rejects_empty_and_malformed(self):
         for url in ["", "not-a-url", "http://"]:
             self.assertFalse(is_safe_evidence_url(url), url)
+
+    def test_rejects_doubled_scheme_regression(self):
+        # v0.3.11 regression: "http://http://127.0.0.1/" was FAILING OPEN —
+        # the literal string "http" ended up as the parsed "host", which
+        # matched none of the blocklist checks and was incorrectly accepted.
+        # Caught by tests/test_adversarial_inputs.py before ever reaching a
+        # live evidence submission.
+        self.assertFalse(is_safe_evidence_url("http://http://127.0.0.1/"))
+        self.assertFalse(is_safe_evidence_url("https://https://10.0.0.5/"))
 
 
 # ============================================================================

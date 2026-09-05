@@ -1,6 +1,6 @@
 # CLAIMGAME — Threat Model
 
-Scope: the deployed system as of v0.3.9 (contract `0x4a4E1a6C3349E88707158fb15bE2F0f6560029Da` on GenLayer StudioNet, Fly.io backend, Vercel frontend). This is a working threat model reflecting what has actually been built and tested, not a template — every mitigation cited below exists in the codebase today, and every open item is genuinely open, not a formality.
+Scope: the deployed system as of v0.3.10 (contract `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` on GenLayer StudioNet, Fly.io backend, Vercel frontend). This is a working threat model reflecting what has actually been built and tested, not a template — every mitigation cited below exists in the codebase today, and every open item is genuinely open, not a formality. **This address changes on every contract redeploy** — verify it still matches `curl -s https://claimgame-api.fly.dev/healthz` before trusting anything below as current.
 
 ## 1. Assets
 
@@ -25,7 +25,7 @@ Scope: the deployed system as of v0.3.9 (contract `0x4a4E1a6C3349E88707158fb15bE
 | Threat | Mitigation | Status |
 |---|---|---|
 | Prompt injection via evidence content | The judgment prompt explicitly instructs the model to treat fetched evidence as untrusted data, not instructions, and to flag (not obey) any embedded directive. | Mitigated, not provably unbreakable — inherent LLM-prompt risk, see §4 |
-| Self-declared evidence tier ("I say this is official docs") | v0.3.7: source tier requires the URL host to match an owner-curated `official_domains` list (`VERIFIED_PRIMARY`) or is downgraded to `PRIMARY_UNVERIFIED`, weighted lower in the prompt. | Partially mitigated — no real protocol has curated domains yet (owner-account-gated, see docs/genlayer.md) |
+| Self-declared evidence tier ("I say this is official docs") | v0.3.10: source tier requires the URL host to match a validator-verified `official_domains` list (`VERIFIED_PRIMARY`) or is downgraded to `PRIMARY_UNVERIFIED`, weighted lower in the prompt. Any account can `propose_official_domain`; `verify_official_domain` is decided by GenVM consensus checking the protocol's real GitHub org metadata, not an owner decision. | Mitigated and live-verified — `uniswap.org` and `openzeppelin.com` both confirmed live via real consensus, plus a negative-control mismatched domain correctly rejected (see docs/genlayer.md's v0.3.10 sections) |
 | Evidence-slot flooding (crowd out the other party's evidence) | Per-party evidence slots (`MAX_JUDGED_EVIDENCE_PER_PARTY`), sorted by verified-tier first within each party's own allowance — neither party can consume the other's slots. | Mitigated |
 | Cross-claim evidence citation (hallucinated/copy-pasted id) | `_apply_verdict` checks every cited id against `claim_evidence_ids` for THIS claim before honoring it. | Mitigated |
 | Judgment never resolves (validator disagreement locks funds) | Ledger is never zeroed until settlement succeeds — a disagreement leaves the claim `CHALLENGED`/unsettled with funds untouched, retryable by anyone (permissionless `submit_for_judgment`). Confirmed live: a real disagreement this session left funds safe and a retry succeeded. | Mitigated (liveness, not correctness) |
@@ -57,7 +57,7 @@ Scope: the deployed system as of v0.3.9 (contract `0x4a4E1a6C3349E88707158fb15bE
 ## 4. Known open items (tracked, not silently accepted)
 
 1. **Judgment reliability sample size** — 9-17/11-19 first-attempt consensus depending on the latest matrix run (see `docs/genlayer.md`), still below a 20-50 case published target.
-2. **Source verification requires owner action** — `set_protocol_official_domains` is correct in code but unused for any real protocol pending the contract owner's own credential.
+2. **Source verification no longer requires owner action (fixed in v0.3.10)** — `propose_official_domain`/`verify_official_domain` replaced the owner-gated path with validator consensus; `set_protocol_official_domains` still exists as an owner-only shortcut but is no longer the only way to reach `VERIFIED_PRIMARY`.
 3. **Archive durability** — off-chain archive is database-hosted, not yet pinned to IPFS/Arweave (needs a pinning-service credential).
 4. **Indexer scaling** — polling-bound, no event-driven alternative exists in the current `genlayer-js` SDK (confirmed by inspecting the installed package for any subscribe/watch API — none found).
 5. **Prompt-injection resistance is instructional, not structural** — the contract tells the model to treat evidence as data, but nothing prevents a sufficiently clever injection from partially succeeding; this is an open research problem for LLM-based judgment generally, not unique to this contract.

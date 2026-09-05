@@ -1,6 +1,7 @@
 # CLAIMGAME — SYSTEM ARCHITECTURE SPECIFICATION
 
-Status: **DRAFT — awaiting your approval before any implementation begins.**
+Status: **This is the original Phase-2 discovery-phase design document, written before implementation began and never updated afterward.** The system described below has since been fully built, deployed, and live-tested (v0.3.10, contract `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` on GenLayer StudioNet) — do not read the "awaiting approval" framing, method names, or table names below as current; several evolved during implementation (e.g. this doc's `settle_human_agreement` is `propose_human_settlement` in the real contract; the `stakes` table described in §15 doesn't exist as named — challenge stakes are tracked on the `challenges` table instead). For what's actually true today: [docs/genlayer.md](./genlayer.md) (contract behavior, version history, capability matrix), [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) (source of truth for every method), [`apps/api/prisma/schema.prisma`](../apps/api/prisma/schema.prisma) (actual database schema), and [`tests/`](../tests/) (actual test suite). This document is kept for historical/product-intent context, not as a current reference.
+
 Tagline: *"Put money behind your interpretation of a protocol."*
 
 Confirmed decisions from Phase 0 discovery:
@@ -75,7 +76,7 @@ Three Fly.io machines, one app group: `api` (Fastify), `indexer` (polling worker
 
 **Resolution (any eligible party):** once challenge window elapses or both sides indicate readiness → "Submit case for judgment" → contract triggers GenLayer LLM evaluation with web-fetch of cited evidence URLs → validators reach Optimistic-Democracy consensus → verdict written on-chain → bonds/stakes settle automatically → reputation events emitted → indexer mirrors everything to Postgres → UI shows the resolution screen.
 
-## 4. Game Mechanics (see [game-economy.md](./game-economy.md) for full detail)
+## 4. Game Mechanics (economics detail now lives directly in `contracts/claimgame/contract.py`'s constants and comments — e.g. `MIN_CLAIM_BOND_WEI`, `MIN_CHALLENGE_MULTIPLIER_BPS`, `APPEAL_BOND_WEI` — no separate game-economy.md was ever created)
 
 Claim → Challenge → Evidence → Judgment → Resolution → Reputation → Progression, exactly as specified in ClaimGame.md. Difficulty (EASY/AMBIGUOUS/HARD/EXTREME) is **derived**, not author-set: computed from (a) number of independent evidence sources, (b) whether declared-vs-observed contradictions exist, (c) historical semantic-precedent similarity. The backend computes this score from indexed data; it is cosmetic metadata, never fed back into the contract as authoritative.
 
@@ -126,7 +127,7 @@ confidence == LOW  OR malformed OR evidence       → NEEDS_HUMAN_REVIEW
 - `settle_human_agreement(claim_id, payout_bps)` — both claimant and challenger co-sign (two separate txs, contract checks both addresses submitted matching terms) — mutual agreement path, **or**
 - `claim_dispute_timeout(claim_id)` after a configurable review-timeout window (e.g. 7 days) — funds return to their original depositors 50/50-of-what-they-put-in (reward back to sponsor-side context aside — for ClaimGame specifically: claim bond back to claimant, challenge stake back to challenger; nobody profits from an inconclusive case). This guarantees no fund is ever permanently stuck, satisfying the review team's "must not lead to an undetermined status" requirement without making the contract too strict to reach consensus — the contract doesn't require a clean verdict to make progress, it just requires *some* path to always terminate.
 
-## 10. Bond / Economic Model — see [game-economy.md](./game-economy.md)
+## 10. Bond / Economic Model — see the constants block at the top of `contracts/claimgame/contract.py` for actual current values (no separate game-economy.md exists)
 
 Summary of flows (full attack analysis in that doc):
 - **Claim bond**: locked by claimant on `create_claim`.
@@ -143,7 +144,7 @@ Three tracked dimensions per user, computed **off-chain** in Postgres from index
 
 Anti-gaming: self-challenge is blocked at the contract level (`challenger != claim.creator`, and same-wallet-cluster heuristics flagged off-chain for manual review); reputation from claims with stake below a spam floor is discounted to near-zero; a rolling-window Sybil-resistance decay discounts reputation gained from wallets with a very new claim history colluding on the same protocol repeatedly.
 
-## 12. Economy Architecture — see [game-economy.md](./game-economy.md)
+## 12. Economy Architecture — folded into §10 above; no separate game-economy.md exists
 
 ## 13. Authentication Architecture
 
@@ -165,7 +166,7 @@ Authoritative-vs-cached separation: every table below is either **CACHE** (deriv
 
 Core tables: `users` (NATIVE — wallet_address PK, created_at, display_name, avatar_url), `sessions` (NATIVE — refresh tokens), `claims` (CACHE — mirrors on-chain claim struct + derived difficulty score), `claim_versions` (CACHE — version history), `evidence` (CACHE — pointer + fetched-content hash + verification status), `challenges` (CACHE), `objections` (CACHE), `stakes` (CACHE — who bonded what, per claim), `resolutions` (CACHE — verdict, confidence, reasoning summary, tx hash), `reputation_events` (CACHE — one row per resolution, source of truth for §11 aggregates), `reputation_scores` (CACHE — materialized rollup, refreshed by indexer), `leaderboards` (CACHE — per-season materialized view), `seasons` (NATIVE — season definitions/date ranges, admin-managed), `notifications` (NATIVE), `protocols` (NATIVE — curated list of protocols claims can reference, admin-extensible), `indexer_cursor` (NATIVE — last-processed block/event id, single row, drives resumable indexing).
 
-Every CACHE table carries `contract_tx_hash`, `synced_at`, and is uniquely keyed by the on-chain claim/entity id — never an auto-increment used as the source of truth for anything financial. Full column-level schema with FKs/indexes/constraints ships in [database.md](./database.md) once you approve this architecture (Phase 4 deliverable, via Prisma schema + migration script).
+Every CACHE table carries `contract_tx_hash`, `synced_at`, and is uniquely keyed by the on-chain claim/entity id — never an auto-increment used as the source of truth for anything financial. Full column-level schema with FKs/indexes/constraints lives in [`apps/api/prisma/schema.prisma`](../apps/api/prisma/schema.prisma) — the actual, current source of truth (no separate database.md was created; the schema file supersedes it).
 
 ## 16. API Architecture
 
@@ -212,16 +213,16 @@ CLAIMGAME/
 ```
 Monorepo (pnpm workspaces + Turborepo) because web/api/contract share types and this keeps the "no fake blockchain" contract types in sync across layers automatically.
 
-## 24. Testing Strategy / 27. Development Milestones — see [testing.md](./testing.md) and the Phase 0–15 plan in ClaimGame.md, which I will follow as-is (Phase 2 = this document; nothing gets implemented until you approve it).
+## 24. Testing Strategy / 27. Development Milestones — no separate testing.md or ClaimGame.md exist. Current testing strategy: deterministic unit tests in [`tests/`](../tests/) (`python3 -m unittest discover -s tests`, `node tests/test_vote_decoding.mjs`, `node tests/test_cid.mjs`), live StudioNet integration scripts in [`scripts/`](../scripts/), and the full version-by-version live-test history in [docs/genlayer.md](./genlayer.md).
 
-## 26. Economic Attack Model — see [game-economy.md](./game-economy.md), covering Sybil, collusion, reputation farming, self-challenge, stake manipulation, evidence spam, griefing, bounty exploitation, and information asymmetry, each with a specific contract- or backend-level mitigation.
+## 26. Economic Attack Model — see [docs/threat-model.md](./threat-model.md) for the current, maintained threat model (covers evidence/consensus manipulation, SSRF, fund-safety invariants; does not use the Sybil/collusion/reputation-farming framing this section originally proposed — no separate game-economy.md was created).
 
 ---
 
 ### What I need from you to proceed
 
 1. **Approve or amend this architecture.** Nothing gets built until you say go.
-2. Confirm the **season-1 GEN amounts** feel right conceptually (exact numbers finalized in game-economy.md) — I'll default to conservative bond floors to limit spam-claim exposure.
+2. GEN bond floors are set directly as constants in `contracts/claimgame/contract.py` (e.g. `MIN_CLAIM_BOND_WEI = 10 GEN`) — no separate game-economy.md was created.
 3. Confirm you're OK with **no social-linking in v1** (you said not needed) — profile identity is wallet-address + optional self-set display name only.
 4. When we reach Phase 14, **you deploy the contract to StudioNet and give me the address** — I will not attempt to deploy it.
 
