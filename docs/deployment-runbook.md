@@ -10,7 +10,7 @@ Copy this into the PR/commit description for any redeploy and check off each lin
 - [ ] **Contract/source match verified** — `genvm-lint check contracts/claimgame/contract.py --json` shows `"ok": true` against the EXACT file that was deployed (no uncommitted local diff between what was deployed and what's in git — check with `git status contracts/claimgame/contract.py`)
 - [ ] **All 4 env locations updated** (§2) — `.env.example` files, Fly secrets (api + indexer), Vercel production env
 - [ ] **Pending Prisma migrations applied**, if any (§3)
-- [ ] **CACHE tables cleared** before the new indexer starts syncing (§4) — NATIVE tables left untouched
+- [ ] **CACHE tables cleared AFTER confirming no old-config indexer machine can poll again** — a rolling deploy briefly leaves the OLD indexer process running on the OLD contract address; if it fires a scheduled poll in that window (which resyncs its *entire* history, since the cursor was just cleared), it will silently re-insert stale data. Truncate, `fly deploy`, then re-check `fly machines list --app claimgame-indexer` for all machines on the new image, and re-truncate if any machine's `LAST UPDATED` predates the truncate — confirmed via `fly logs` in a real 2026-09-05 redeploy (v0.3.11, see docs/genlayer.md)
 - [ ] **API + indexer redeployed**, frontend redeployed (§4, §5)
 - [ ] **`/healthz` confirms the new address** (§6)
 - [ ] **Live smoke tests run against the new address** — at minimum `scripts/product-test-1-full-lifecycle.mjs`; run all 4 `scripts/product-test-*.mjs` for a full redeploy, not just a config change

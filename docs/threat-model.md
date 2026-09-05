@@ -1,6 +1,6 @@
 # CLAIMGAME — Threat Model
 
-Scope: the deployed system as of v0.3.10 (contract `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` on GenLayer StudioNet, Fly.io backend, Vercel frontend). This is a working threat model reflecting what has actually been built and tested, not a template — every mitigation cited below exists in the codebase today, and every open item is genuinely open, not a formality. **This address changes on every contract redeploy** — verify it still matches `curl -s https://claimgame-api.fly.dev/healthz` before trusting anything below as current.
+Scope: the deployed system as of v0.3.11 (contract `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6` on GenLayer StudioNet, Fly.io backend, Vercel frontend). This is a working threat model reflecting what has actually been built and tested, not a template — every mitigation cited below exists in the codebase today, and every open item is genuinely open, not a formality. **This address changes on every contract redeploy** — verify it still matches `curl -s https://claimgame-api.fly.dev/healthz` before trusting anything below as current.
 
 ## 1. Assets
 

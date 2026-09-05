@@ -1,6 +1,6 @@
 # CLAIMGAME — GenLayer Intelligent Contract
 
-File: [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) — one contract, 2,128 lines (v0.3.10, deployed at `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1`, GenLayer StudioNet), syntax-verified with `python3 -m py_compile` and `genvm-lint check` (43 public methods: 22 view / 21 write). This line count and address are a point-in-time snapshot — regenerate with `wc -l contracts/claimgame/contract.py` and `curl -s https://claimgame-api.fly.dev/healthz` before trusting them if this doc has aged.
+File: [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) — one contract, 2,146 lines (v0.3.11, deployed at `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6`, GenLayer StudioNet), syntax-verified with `python3 -m py_compile` and `genvm-lint check` (43 public methods: 22 view / 21 write). This line count and address are a point-in-time snapshot — regenerate with `wc -l contracts/claimgame/contract.py` and `curl -s https://claimgame-api.fly.dev/healthz` before trusting them if this doc has aged.
 
 ## Why GenLayer, specifically here
 
@@ -407,3 +407,18 @@ Every important public write method, mapped to authorization, state transition, 
 | `register_protocol` | Permissionless | Adds/updates protocol registry entry | None | None | N/A | — |
 
 **Why the judgment/appeal consensus check is substantive, not superficial** (the specific concern this matrix is meant to let a reviewer verify): `validator_fn` in `_run_judgment` does not accept any syntactically-valid JSON as agreement — it requires the leader's and each validator's INDEPENDENTLY-COMPUTED `verdict` field to match EXACTLY (`PASSED`/`FAILED`/`PARTIAL`/`INCONCLUSIVE` — no partial credit for "close enough" categories) and `payout_bps` to round to the same 2000-bps bucket. A validator that returns well-formed JSON with a different verdict conclusion is a `disagree`, full stop — confirmed by the reliability matrix's own real disagreements (e.g. `docs/genlayer.md`'s v0.3.7/v0.3.8 sections: real 3-disagree/0-agree outcomes on real evidence, not shape mismatches). The evidence-extraction layer (`_fetch_and_extract_facts`) is intentionally NOT where substantive judgment happens — it's deliberately reduced to deterministic string parsing precisely so that layer's agreement is guaranteed and all remaining disagreement risk is concentrated in the one place it should be: the model's actual reading of the evidence.
+
+## v0.3.11 redeployed — 4 real product tests re-run, 74/74 checks passed, zero errors (2026-09-05)
+
+Deployed the v0.3.11 source (SSRF doubled-scheme fix + doc audit, above) to `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6`. Wired the new address across all 4 env locations (`.env.example` files, Fly secrets on `claimgame-api` + `claimgame-indexer`, Vercel production), cleared all CACHE tables, redeployed api/indexer/frontend.
+
+Re-ran the same 4 product tests used for v0.3.10's coverage pass, against the new address, with fresh real evidence (no placeholder data):
+
+- **Test 1 — full lifecycle** (Uniswap v4 PoolManager singleton dispute): **32/32 checks passed**.
+- **Test 2 — withdrawal + guard rails** (Compound v3 single-base-asset-market dispute): **14/14 checks passed**.
+- **Test 3 — ambiguous dispute → human review** (MakerDAO Emergency Shutdown dispute): **15/15 checks passed**.
+- **Test 4 — protocol registry + validator-verified domains** (real OpenZeppelin GitHub org + negative-control mismatched domain): **13/13 checks passed**.
+
+**Combined: 74/74 checks passed, zero contract-side errors, zero consensus disagreements.**
+
+**Operational note, caught and fixed during this redeploy:** immediately after the CACHE truncate, the *previous* indexer machine — still running its old in-process config in the few seconds before the rolling redeploy replaced it — fired one more scheduled poll against the *old* contract and re-inserted its full historical data (since `indexer_cursor` had just been cleared, that poll treated it as a full resync). This produced a brief window where the API served 3 stale claims with their original `2026-08-30` timestamps instead of the new contract's fresh data. Confirmed via `fly logs --app claimgame-indexer`: the old process's last tick landed at `16:09:51`, 44 seconds before its container rebooted into the new deploy at `16:10:35`. Fixed by re-running the CACHE truncate once both indexer machines were confirmed on the new deployment/address (`fly machines list` showing both machines on the same image digest as the redeploy) — after which the indexer resynced cleanly with only the new contract's real data. No corruption of on-chain state occurred at any point; this was purely a transient off-chain cache artifact from the redeploy race, and is now reflected in the redeploy checklist in [`docs/deployment-runbook.md`](deployment-runbook.md#contract-redeploy-checklist) (verify both/all indexer machines are on the new deploy before trusting a post-truncate resync).

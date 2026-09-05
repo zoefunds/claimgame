@@ -4,7 +4,7 @@ A single page pointing at reproducible proof for every claim this project makes.
 
 ## Deployment
 
-- **Contract address:** `0x7669F31fe5B91E7e7661f6C88a53351fb29662D1` (v0.3.10, GenLayer StudioNet)
+- **Contract address:** `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6` (v0.3.11, GenLayer StudioNet)
 - **Live app:** https://claim-game.vercel.app
 - **API health check:** `curl -s https://claimgame-api.fly.dev/healthz` — returns the currently-live contract address; cross-check it against the address above before trusting anything else here
 - **Source of the deployed contract:** [`contracts/claimgame/contract.py`](../contracts/claimgame/contract.py) (2,128 lines, 43 public methods — 22 view / 21 write; verify with `wc -l` and `genvm-lint check contracts/claimgame/contract.py --json`)
