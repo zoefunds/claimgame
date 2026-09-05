@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
+import { contractReads } from "@/lib/contract";
 import type { BackendClaim, Claim } from "@/lib/types";
 import { mapBackendClaim } from "@/lib/types";
 import { DifficultyBadge, StatusBadge, GenAmount } from "@/components/Badges";
@@ -13,26 +14,62 @@ const POLL_INTERVAL_MS = 8_000;
 /**
  * Hunt Board reads from the backend's Postgres cache
  * (`GET /api/v1/claims`), NOT directly from GenLayer. The cache is kept
- * fresh by one centralized indexer process polling the contract every 5s
- * (apps/api/src/indexer) — every open browser tab polling GenLayer's
+ * fresh by one centralized indexer process polling the contract every 5
+ * minutes (apps/api/src/indexer) — every open browser tab polling GenLayer's
  * StudioNet RPC directly every 8s would multiply with concurrent users and
  * risk the shared RPC's rate limit; polling our own Fly-hosted API instead
  * doesn't touch GenLayer at all per page view. Contract reads/writes still
  * happen directly from the browser for anything that needs to be
  * authoritative (claim detail's action panel, create-claim).
+ *
+ * A claim created moments ago can be missing from that cache for up to one
+ * indexer cycle. Mirrors claims/[id]/page.tsx's `reloadFromChain` fallback:
+ * once per mount (never on every poll — that would recreate the exact
+ * rate-limit risk the cache exists to avoid), compare the cache against
+ * on-chain `get_claim_count`; any higher id the cache doesn't have yet is
+ * fetched directly and merged in, so a just-created claim shows up on the
+ * Hunt Board immediately instead of waiting out the indexer's cycle. The
+ * next successful cache poll naturally supersedes these entries once the
+ * indexer catches up (same id, cache copy wins — see the merge in `load`).
  */
 export default function HuntBoardPage() {
   const [claims, setClaims] = useState<Claim[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const chainReconciled = useRef(false);
 
   const load = useCallback(async () => {
     try {
       const rows = await apiGet<BackendClaim[]>("/api/v1/claims?limit=50");
-      setClaims(rows.map(mapBackendClaim));
+      const cached = rows.map(mapBackendClaim);
+      setClaims((prev) => mergeClaims(cached, prev));
       setError(null);
+
+      if (!chainReconciled.current) {
+        chainReconciled.current = true;
+        reconcileWithChain(cached).catch(() => {
+          // Best-effort only — if this fails, the claim still appears once
+          // the indexer's next cycle runs. Never surface this as a page error.
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load claims");
     }
+  }, []);
+
+  const reconcileWithChain = useCallback(async (cached: Claim[]) => {
+    const totalCount = await contractReads.getClaimCount();
+    const cachedIds = new Set(cached.map((c) => c.id));
+    const missingIds: string[] = [];
+    for (let id = totalCount; id >= 1; id--) {
+      const idStr = String(id);
+      if (!cachedIds.has(idStr)) missingIds.push(idStr);
+    }
+    if (missingIds.length === 0) return;
+
+    const fetched = await Promise.all(
+      missingIds.map((id) => contractReads.getClaim(id) as Promise<Claim>),
+    );
+    setClaims((prev) => mergeClaims(fetched, prev));
   }, []);
 
   useEffect(() => {
@@ -109,4 +146,20 @@ export default function HuntBoardPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Merges an authoritative batch of claims (`incoming`) into whatever the
+ * board already had (`prev`), keyed by id. `incoming` wins on conflict —
+ * used both for a fresh cache poll (cache always supersedes a stale
+ * chain-only placeholder once the indexer catches up to that id) and for
+ * the chain-reconciliation fallback (chain data wins over nothing, since
+ * `prev` never has an entry for a still-uncached id). Sorted newest-id-first
+ * to match the backend's `createdAt desc` ordering.
+ */
+function mergeClaims(incoming: Claim[], prev: Claim[] | null): Claim[] {
+  const byId = new Map<string, Claim>();
+  for (const claim of prev ?? []) byId.set(claim.id, claim);
+  for (const claim of incoming) byId.set(claim.id, claim);
+  return [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id));
 }
