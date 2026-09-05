@@ -99,5 +99,5 @@ Then run the live test scripts in `scripts/` against the new address before trea
 
 - **Fly's build backend is occasionally flaky** ("no route to host", "context deadline exceeded" during `fly deploy`) — these are transient infra issues on Fly's side, not project bugs. Retry the exact same command; it has always succeeded on retry in this project's history.
 - **`fly ssh console -C "..."` can also transiently fail** ("Server has closed the connection") — same treatment, retry.
-- **StudioNet's RPC has two independent rate limits**: 500 requests/hour and 30 requests/minute. The indexer respects both (15-minute poll interval + per-call throttling). Live test scripts must throttle calls too (~2.4s spacing) or they'll get retry-exhausted errors mid-run.
+- **StudioNet's RPC has two independent rate limits**: 500 requests/hour and 30 requests/minute. The indexer respects both (5-minute poll interval, tightened from 15 on 2026-09-05 — see `POLL_INTERVAL_MS` in `apps/api/src/indexer/index.ts` — + per-call throttling; `ACTIVE_CLAIM_CAPACITY_WARNING` was lowered to match). Live test scripts must throttle calls too (~2.4s spacing) or they'll get retry-exhausted errors mid-run.
 - **`fly proxy` + a local `DATABASE_URL` for migrations was unreliable in practice** — `fly postgres connect` (piping raw SQL via stdin) proved more reliable for one-off schema changes.

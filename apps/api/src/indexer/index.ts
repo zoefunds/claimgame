@@ -50,12 +50,23 @@ import { createHash } from "node:crypto";
  *     to scale regardless of the interval — it's now closer to O(active
  *     claims) than O(all claims ever created).
  */
-const POLL_INTERVAL_MS = 15 * 60_000; // 15 minutes — see rate-limit note above
+/**
+ * TIGHTENED 2026-09-05: was 15 minutes. At CLAIMGAME's current claim volume
+ * (single digits, all fully-synced within one tick) a fresh claim sitting
+ * unlisted on the Hunt Board for up to 15 minutes was a worse user
+ * experience than the rate-limit headroom it bought. 5 minutes still keeps
+ * the hourly budget safe with real margin (see math below) — re-widen this
+ * (or make it env-configurable) if claim volume grows enough to approach
+ * ACTIVE_CLAIM_CAPACITY_WARNING.
+ */
+const POLL_INTERVAL_MS = 5 * 60_000; // 5 minutes — see rate-limit note above
 
 // See the capacity-warning comment in tick() — conservative estimate of how
 // many ACTIVE (non-terminal, fully-synced) claims one tick can safely carry
-// without risking the 500/hour budget across ~4 ticks/hour at this interval.
-const ACTIVE_CLAIM_CAPACITY_WARNING = 12;
+// without risking the 500/hour budget. At 12 ticks/hour (5-minute interval),
+// each tick has a ~41-call budget (500/12) before risking the hourly cap;
+// at ~6-8 calls/claim that's ~5 active claims/tick with margin.
+const ACTIVE_CLAIM_CAPACITY_WARNING = 5;
 
 const TERMINAL_STATUSES = new Set([
   "RESOLVED_MERGE",
@@ -717,10 +728,10 @@ async function tick(client: ReturnType<typeof createClient>, address: `0x${strin
   // Audit finding #6: this worker is capacity-bound by StudioNet's RPC
   // limits (500/hour, 30/minute — see the throttling comment above), not
   // by anything in our own control. ACTIVE_CLAIM_CAPACITY_WARNING is the
-  // rough point past which a single 15-minute tick's RPC cost (active
-  // claims × ~8 calls each, spaced 2.2s apart) starts eating into the
-  // hourly budget across the ~4 ticks/hour this interval implies. This
-  // doesn't fix the underlying capacity ceiling — that needs either a
+  // rough point past which a single tick's RPC cost (active claims × ~8
+  // calls each, spaced 2.2s apart) starts eating into the hourly budget
+  // across the ticks/hour this interval implies (see POLL_INTERVAL_MS).
+  // This doesn't fix the underlying capacity ceiling — that needs either a
   // genuinely event-driven sync (no polling) or a paid/higher-tier RPC
   // endpoint — but it makes the ceiling visible in logs instead of the
   // indexer silently falling behind the way it did during the original

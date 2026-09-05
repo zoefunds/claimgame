@@ -49,7 +49,7 @@ CLAIMGAME's central action — deciding whether a claimant's interpretation of a
 | Contract | GenLayer StudioNet | `0x4F3789881344cB7a5176b19eEADBAc3586Bb2EA6` — v0.3.11, deployed 2026-09-05, 4 real product tests / 74/74 checks passed, zero errors — see [genlayer.md](docs/genlayer.md) |
 | Frontend | Vercel — [claim-game.vercel.app](https://claim-game.vercel.app) | project `claim-game`, org `adebiyi2002gmailcoms-projects` |
 | API | Fly.io — [claimgame-api.fly.dev](https://claimgame-api.fly.dev) | `min_machines_running=1`, 24/7 |
-| Indexer | Fly.io — `claimgame-indexer` (no public URL, background worker) | `min_machines_running=1` (2 machines), 24/7, polls the contract every 15 minutes with a settled-claim skip |
+| Indexer | Fly.io — `claimgame-indexer` (no public URL, background worker) | `min_machines_running=1` (2 machines), 24/7, polls the contract every 5 minutes with a settled-claim skip |
 | Database | Fly Postgres — `claimgame-db` | scoped db/user `claimgame_api`, attached to both `claimgame-api` and `claimgame-indexer` |
 
 All contract address / RPC / secrets are environment-driven — see `.env.example`, `apps/web/.env.example`, `apps/api/.env.example`. Nothing is hardcoded in source. When the deployed contract address changes, four things must be updated in lockstep: `CLAIMGAME_CONTRACT_ADDRESS` (Fly secrets on `claimgame-api` + `claimgame-indexer`), `NEXT_PUBLIC_CLAIMGAME_CONTRACT_ADDRESS` (Vercel env), and the CACHE tables (see [Database model](#database-model) below) should be cleared since they mirror the *previous* contract's state.
@@ -118,7 +118,7 @@ Two categories of Postgres table, a distinction that matters for redeploys:
 - **NATIVE** (off-chain source of truth, never cleared on a contract redeploy): `users`, `sessions`, `auth_nonces`, `notifications`, `protocols`, `seasons`.
 - **CACHE** (indexer-written mirror of on-chain state, cleared and rebuilt from scratch on every contract redeploy): `claims`, `claim_versions`, `evidence`, `challenges`, `objections`, `resolutions`, `appeals`, `reputation_events`, `reputation_scores`, `leaderboard_entries`, `indexer_cursor`.
 
-The indexer (`apps/api/src/indexer/index.ts`) polls the contract every 15 minutes, throttled to respect StudioNet's dual rate limits (500 requests/hour, 30/minute), and skips any claim already in a terminal status matching Postgres (nothing about a resolved/withdrawn/expired claim can change again, so there's no reason to keep re-fetching it).
+The indexer (`apps/api/src/indexer/index.ts`) polls the contract every 5 minutes (tightened from 15 on 2026-09-05 — a fresh claim sitting unlisted on the Hunt Board for up to 15 minutes was worse than the rate-limit headroom it bought at CLAIMGAME's current claim volume), throttled to respect StudioNet's dual rate limits (500 requests/hour, 30/minute), and skips any claim already in a terminal status matching Postgres (nothing about a resolved/withdrawn/expired claim can change again, so there's no reason to keep re-fetching it). A brand-new claim's OWN detail page still bypasses this delay entirely via the `reloadFromChain` fallback that reads directly from the contract right after your own transaction confirms — only the Hunt Board LIST reflects the poll interval.
 
 ## Contract test results
 
